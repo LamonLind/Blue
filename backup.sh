@@ -2,7 +2,7 @@
 # =========================================
 # Quick Setup | Script Setup Manager
 # Edition : Stable Edition V1.0
-# Auther  : NevermoreSSH
+# Auther  : LamonLind
 # (C) Copyright 2022
 # =========================================
 
@@ -19,7 +19,7 @@ IP=$(curl -sS ifconfig.me )
 date=$(date +"%Y-%m-%d-%H:%M:%S")
 domain=$(cat /etc/xray/domain)
 clear
-echo " VPS Data Backup By NevermoreSSH "
+echo " VPS Data Backup By LamonLind "
 sleep 1
 echo -e "[ ${green}INFO${NC} ] Processing . . . "
 mkdir -p /root/backup
@@ -46,8 +46,8 @@ url=$(rclone link dr:backup/$IP-$date-$domain-blueblue.zip)
 id=(`echo $url | grep '^https' | cut -d'=' -f2`)
 link="https://drive.google.com/u/4/uc?id=${id}&export=download"
 clear
-echo -e "\033[1;37mVPS Data Backup By NevermoreSSH\033[0m
-\033[1;37mTelegram : https://t.me/todfix667 / @NevermoreSSH\033[0m"
+echo -e "\033[1;37mVPS Data Backup By LamonLind\033[0m
+\033[1;37mTelegram : https://t.me/todfix667 / @LamonLind\033[0m"
 echo ""
 echo "Please Copy Link Below & Save In Notepad"
 echo ""

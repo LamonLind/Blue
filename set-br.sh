@@ -2,10 +2,10 @@
 # =========================================
 # Quick Setup | Script Setup Manager
 # Edition : Stable Edition V1.0
-# Auther  : NevermoreSSH
+# Auther  : LamonLind
 # (C) Copyright 2022
 # =========================================
-export Server_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main"
+export Server_URL="raw.githubusercontent.com/LamonLind/Blue/main"
 
 clear
 dateFromServer=$(curl -v --insecure --silent https://google.com/ 2>&1 | grep Date | sed -e 's/< Date: //')

@@ -2,7 +2,7 @@
 # =========================================
 # Quick Setup | Script Setup Manager
 # Edition : Stable Edition V1.0
-# Auther  : NevermoreSSH
+# Auther  : LamonLind
 # (C) Copyright 2022
 # =========================================
 clear
@@ -46,5 +46,5 @@ echo " Client Name : $user"
 echo " Expired On  : $exp"
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo -e ""
-echo -e "Autoscript By NevermoreSSH"
+echo -e "Autoscript By LamonLind"
 echo -e ""

@@ -44,8 +44,8 @@ export WARNING="${RED}\e[5m"
 export UNDERLINE="\e[4m"
 
 # // Exporting URL Host
-export Server_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/test"
-export Server1_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/limit"
+export Server_URL="raw.githubusercontent.com/LamonLind/Blue/main/test"
+export Server1_URL="raw.githubusercontent.com/LamonLind/Blue/main/limit"
 export Server_Port="443"
 export Server_IP="underfined"
 export Script_Mode="Stable"
@@ -114,7 +114,7 @@ echo -e "Link TrGo  		: ${link}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link TrGo (v2rayNG)	: ${link1}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-echo -e "Script Mod By NevermoreSSH"
+echo -e "Script Mod By LamonLind"
 echo "" | tee -a /etc/log-create-user.log
 read -n 1 -s -r -p "Press any key to back on menu"
 

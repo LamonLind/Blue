@@ -44,8 +44,8 @@ export WARNING="${RED}\e[5m"
 export UNDERLINE="\e[4m"
 
 # // Exporting URL Host
-export Server_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/test"
-export Server1_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/limit"
+export Server_URL="raw.githubusercontent.com/LamonLind/Blue/main/test"
+export Server1_URL="raw.githubusercontent.com/LamonLind/Blue/main/limit"
 export Server_Port="443"
 export Server_IP="underfined"
 export Script_Mode="Stable"
@@ -89,7 +89,7 @@ echo "Progress..."
 sleep 2
 
 /etc/init.d/vnstat restart >/dev/null 2>&1
-wget -q https://github.com/NevermoreSSH/vnstat/releases/download/vnstat/vnstat-2.6.tar.gz
+wget -q https://github.com/LamonLind/vnstat/releases/download/vnstat/vnstat-2.6.tar.gz
 tar zxvf vnstat-2.6.tar.gz
 cd vnstat-2.6
 ./configure --prefix=/usr --sysconfdir=/etc >/dev/null 2>&1 && make >/dev/null 2>&1 && make install >/dev/null 2>&1

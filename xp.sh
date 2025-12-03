@@ -90,6 +90,7 @@ exp2=$(( (d1 - d2) / 86400 ))
 if [[ "$exp2" -le "0" ]]; then
 sed -i "/^#vls $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vlsg $user $exp/,/^},{/d" /etc/xray/config.json
+sed -i "/^#vlsx $user $exp/,/^},{/d" /etc/xray/config.json
 fi
 done
 

@@ -120,7 +120,7 @@ Link TLS : vless://${uuid}@${domain}:443?type=ws&encryption=none&security=tls&ho
 _______________________________________________________
 Link none TLS : vless://${uuid}@${domain}:80?type=ws&encryption=none&security=none&host=${domain}&path=/vless#XRAY_VLESS_NTLS_${user}
 _______________________________________________________
-Link GRPC : vless://${uuid}@${domain}:$tls?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=bug.com#VLESS_GRPC_${user}
+Link GRPC : vless://${uuid}@${domain}:$tls?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${domain}#VLESS_GRPC_${user}
 _______________________________________________________
 Link XHTTP TLS : vless://${uuid}@${domain}:443?type=xhttp&encryption=none&security=tls&host=${domain}&path=/vless-xhttp&sni=${domain}#VLESS_XHTTP_TLS_${user}
 _______________________________________________________

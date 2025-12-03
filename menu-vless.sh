@@ -151,6 +151,7 @@ NUMBER_OF_CLIENTS=$(grep -c -E "^#vlsg " "/etc/xray/config.json")
     exp4=`date -d "$exp3 days" +"%Y-%m-%d"`
     sed -i "/#vlsg $user/c\#vlsg $user $exp4" /etc/xray/config.json
     sed -i "/#vls $user/c\#vls $user $exp4" /etc/xray/config.json
+    sed -i "/#vlsx $user/c\#vlsx $user $exp4" /etc/xray/config.json
     systemctl restart xray > /dev/null 2>&1
     clear
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
@@ -193,6 +194,7 @@ user=$(grep -E "^#vlsg " "/etc/xray/config.json" | cut -d ' ' -f 2 | sed -n "${C
 exp=$(grep -E "^#vlsg " "/etc/xray/config.json" | cut -d ' ' -f 3 | sed -n "${CLIENT_NUMBER}"p)
 sed -i "/^#vlsg $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vls $user $exp/,/^},{/d" /etc/xray/config.json
+sed -i "/^#vlsx $user $exp/,/^},{/d" /etc/xray/config.json
 systemctl restart xray.service
 service cron restart
 clear

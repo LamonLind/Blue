@@ -261,7 +261,7 @@ vmesslink8="vmess://$(echo $xhttp_tls | base64 -w 0)"
 vmesslink9="vmess://$(echo $xhttp_ntls | base64 -w 0)"
 cat > /home/vps/public_html/vmess-$user.txt <<-END
 ====================================================================
-             P R O J E C T  O F  N E V E R M O R E S S H
+             P R O J E C T  O F  L A M O N L I N D
                        [Freedom Internet]
 ====================================================================
         https://github.com/LamonLind/Blue

@@ -17,12 +17,19 @@ MYIP=$(wget -qO- ipinfo.io/ip);
 #MYIP=$(wget -qO- https://ipv6.icanhazip.com);
 clear
 apt install jq curl -y
-DOMAIN=nevermoressh.me
+
+# Domain setup - Configure your Cloudflare credentials below
 # sub=$(</dev/urandom tr -dc a-z | head -c4)
-sub=$(premium)
-SUB_DOMAIN=${sub}.nevermoressh.me
-CF_ID=elliez667@gmail.com
-CF_KEY=565df838cbdf80722e12eb5b1d7186143b74e
+sub=$(</dev/urandom tr -dc a-z | head -c4)
+
+# Enter your domain and Cloudflare API credentials
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+echo -e "         DOMAIN CONFIGURATION         "
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+read -rp "Enter your domain (e.g., example.com): " DOMAIN
+read -rp "Enter Cloudflare Email: " CF_ID
+read -rp "Enter Cloudflare API Key: " CF_KEY
+SUB_DOMAIN=${sub}.${DOMAIN}
 set -euo pipefail
 IP=$(wget -qO- ipinfo.io/ip);
 echo "Updating DNS for ${SUB_DOMAIN}..."
@@ -50,7 +57,7 @@ RESULT=$(curl -sLX PUT "https://api.cloudflare.com/client/v4/zones/${ZONE}/dns_r
      -H "Content-Type: application/json" \
      --data '{"type":"A","name":"'${SUB_DOMAIN}'","content":"'${IP}'","ttl":300,"proxied":false}')
 
-WILD_DOMAIN="*.$sub"
+WILD_DOMAIN="*.${DOMAIN}"
 set -euo pipefail
 echo ""
 echo "Updating DNS for ${WILD_DOMAIN}..."

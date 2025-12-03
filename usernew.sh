@@ -107,7 +107,7 @@ PID=`ps -ef |grep -v grep | grep sshws |awk '{print $2}'`
 
 cat > /home/vps/public_html/ssh-$Login.txt <<-END
 ====================================================================
-             P R O J E C T  O F  N E V E R M O R E S S H
+             P R O J E C T  O F  L A M O N L I N D
                        [Freedom Internet]
 ====================================================================
             https://github.com/LamonLind

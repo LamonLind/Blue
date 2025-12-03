@@ -8,12 +8,18 @@ MYIP=$(curl -sS ifconfig.me )
 #MYIP=$(wget -qO- https://ipv6.icanhazip.com);
 clear
 apt install jq curl -y
+# Domain setup - Configure your Cloudflare credentials below
 # sub=$(</dev/urandom tr -dc a-z | head -c4)
-sub=$(premium)
-DOMAIN=nevermoressh.me
-SUB_DOMAIN=${sub}.nevermoressh.me
-CF_ID=elliez667@gmail.com
-CF_KEY=565df838cbdf80722e12eb5b1d7186143b74e
+sub=$(</dev/urandom tr -dc a-z | head -c4)
+
+# Enter your domain and Cloudflare API credentials
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+echo -e "         DOMAIN CONFIGURATION         "
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+read -rp "Enter your domain (e.g., example.com): " DOMAIN
+read -rp "Enter Cloudflare Email: " CF_ID
+read -rp "Enter Cloudflare API Key: " CF_KEY
+SUB_DOMAIN=${sub}.${DOMAIN}
 set -euo pipefail
 IP=$(curl -sS ifconfig.me);
 echo "Updating DNS for ${SUB_DOMAIN}..."

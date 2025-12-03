@@ -2,7 +2,7 @@
 # =========================================
 # Quick Setup | Script Setup Manager
 # Edition : Stable Edition V1.0
-# Auther  : NevermoreSSH
+# Auther  : LamonLind
 # (C) Copyright 2022
 # =========================================
 P='\e[0;35m'
@@ -14,7 +14,7 @@ clear
 echo -e "\e[36m╒════════════════════════════════════════════╕\033[0m"
 echo -e " \E[0;47;30m                 DNS CHANGER                \E[0m"
 echo -e "\e[36m╘════════════════════════════════════════════╛\033[0m
-\033[1;37mDNS Changer By NevermoreSSH\033[0m
+\033[1;37mDNS Changer By LamonLind\033[0m
 \033[1;37mTelegram : https://t.me/todfix667 \033[0m"
 dnsfile="/root/dns"
 if test -f "$dnsfile"; then

@@ -105,7 +105,7 @@ sed -i '/#vlessxhttp$/a\#vlsx '"$user $exp"'\
 cat > /home/vps/public_html/vless-$user.txt <<-END
 
 ====================================================================
-             P R O J E C T  O F  N E V E R M O R E S S H
+             P R O J E C T  O F  L A M O N L I N D
                        [Freedom Internet]
 ====================================================================
         https://github.com/LamonLind/Blue

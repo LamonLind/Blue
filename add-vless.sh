@@ -43,8 +43,8 @@ export WARNING="${RED}\e[5m"
 export UNDERLINE="\e[4m"
 
 # // Exporting URL Host
-export Server_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/test"
-export Server1_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/limit"
+export Server_URL="raw.githubusercontent.com/LamonLind/Blue/main/test"
+export Server1_URL="raw.githubusercontent.com/LamonLind/Blue/main/limit"
 export Server_Port="443"
 export Server_IP="underfined"
 export Script_Mode="Stable"
@@ -100,15 +100,17 @@ sed -i '/#vless$/a\#vls '"$user $exp"'\
 },{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#vlessgrpc$/a\#vlsg '"$user $exp"'\
 },{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#vlessxhttp$/a\#vlsx '"$user $exp"'\
+},{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
 cat > /home/vps/public_html/vless-$user.txt <<-END
 
 ====================================================================
              P R O J E C T  O F  N E V E R M O R E S S H
                        [Freedom Internet]
 ====================================================================
-        https://github.com/NevermoreSSH/Blueblue
+        https://github.com/LamonLind/Blue
 ====================================================================
-              Format Vless WS/GRPC
+              Format Vless WS/GRPC/XHTTP
 ====================================================================
 
 _______________________________________________________
@@ -120,6 +122,10 @@ Link none TLS : vless://${uuid}@${domain}:80?type=ws&encryption=none&security=no
 _______________________________________________________
 Link GRPC : vless://${uuid}@${domain}:$tls?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=bug.com#VLESS_GRPC_${user}
 _______________________________________________________
+Link XHTTP TLS : vless://${uuid}@${domain}:443?type=xhttp&encryption=none&security=tls&host=${domain}&path=/vless-xhttp&sni=${domain}#VLESS_XHTTP_TLS_${user}
+_______________________________________________________
+Link XHTTP none TLS : vless://${uuid}@${domain}:80?type=xhttp&encryption=none&security=none&host=${domain}&path=/vless-xhttp#VLESS_XHTTP_NTLS_${user}
+_______________________________________________________
 Expired On : $exp
 _______________________________________________________
 
@@ -127,6 +133,8 @@ END
 vlesslink1="vless://${uuid}@${domain}:443?type=ws&encryption=none&security=tls&host=${domain}&path=/vless&allowInsecure=1&sni=${domain}#XRAY_VLESS_TLS_${user}"
 vlesslink2="vless://${uuid}@${domain}:80?type=ws&encryption=none&security=none&host=${domain}&path=/vless#XRAY_VLESS_NTLS_${user}"
 vlesslink3="vless://${uuid}@${domain}:$tls?mode=gun&security=tls&encryption=none&type=grpc&serviceName=vless-grpc&sni=${domain}#VLESS_GRPC_${user}"
+vlesslink4="vless://${uuid}@${domain}:443?type=xhttp&encryption=none&security=tls&host=${domain}&path=/vless-xhttp&sni=${domain}#VLESS_XHTTP_TLS_${user}"
+vlesslink5="vless://${uuid}@${domain}:80?type=xhttp&encryption=none&security=none&host=${domain}&path=/vless-xhttp#VLESS_XHTTP_NTLS_${user}"
 systemctl restart xray
 clear
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
@@ -137,16 +145,21 @@ echo -e "Domain : ${domain}" | tee -a /etc/log-create-user.log
 echo -e "port TLS : $tls" | tee -a /etc/log-create-user.log
 echo -e "port none TLS : $none" | tee -a /etc/log-create-user.log
 echo -e "id : ${uuid}" | tee -a /etc/log-create-user.log
-echo -e "Network : ws/grpc" | tee -a /etc/log-create-user.log
+echo -e "Network : ws/grpc/xhttp" | tee -a /etc/log-create-user.log
 echo -e "Encryption : none" | tee -a /etc/log-create-user.log
 echo -e "Path : /vless" | tee -a /etc/log-create-user.log
 echo -e "Path : vless-grpc" | tee -a /etc/log-create-user.log
+echo -e "Path : /vless-xhttp" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link TLS : ${vlesslink1}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link none TLS : ${vlesslink2}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link GRPC : ${vlesslink3}" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "Link XHTTP TLS : ${vlesslink4}" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "Link XHTTP none TLS : ${vlesslink5}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link Vless Config : http://${domain}:81/vless-$user.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log

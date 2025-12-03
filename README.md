@@ -51,11 +51,11 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
 ♦️ Installation Link <br>
 
   ```html
-apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2 gzip coreutils screen dpkg wget vim curl nano zip unzip && wget -q https://raw.githubusercontent.com/NevermoreSSH/Blueblue/main/setup.sh && chmod +x setup.sh && screen -S setup ./setup.sh
+apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2 gzip coreutils screen dpkg wget vim curl nano zip unzip && wget -q https://raw.githubusercontent.com/LamonLind/Blue/main/setup.sh && chmod +x setup.sh && screen -S setup ./setup.sh
   ```
 IPV6 enable
 ```html
-apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2 gzip coreutils screen dpkg wget vim curl nano zip unzip && wget -q https://raw.githubusercontent.com/NevermoreSSH/Blueblue/main/setup2.sh && chmod +x setup2.sh && screen -S setup ./setup2.sh
+apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2 gzip coreutils screen dpkg wget vim curl nano zip unzip && wget -q https://raw.githubusercontent.com/LamonLind/Blue/main/setup2.sh && chmod +x setup2.sh && screen -S setup ./setup2.sh
   ```
 <b>
 
@@ -65,6 +65,8 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
 ✅ XRAY VMESS WEBSOCKET TLS & NON-TLS 443/80<br>
 ✅ XRAY VLESS WEBSOCKET TLS & NON-TLS 443/80<br>
 ✅ XRAY TROJAN WEBSOCKET TLS & NON-TLS 443/80<br>
+✅ XRAY VMESS XHTTP TLS & NON-TLS 443/80<br>
+✅ XRAY VLESS XHTTP TLS & NON-TLS 443/80<br>
 <br>
 
 [ OTHER SERVICES ] <br>
@@ -95,9 +97,13 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
    - XRAY Vmess GRPC         : 443
    - XRAY Vmess TLS          : 443
    - XRAY Vmess None TLS     : 80
+   - XRAY Vmess XHTTP TLS    : 443
+   - XRAY Vmess XHTTP None   : 80
    - XRAY Vless GRPC         : 443
    - XRAY Vless TLS          : 443
    - XRAY Vless None TLS     : 80
+   - XRAY Vless XHTTP TLS    : 443
+   - XRAY Vless XHTTP None   : 80
    - XRAY Trojan GRPC        : 443
    - XRAY Trojan GO          : 443
    - XRAY Trojan WS          : 443

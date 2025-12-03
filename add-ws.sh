@@ -43,8 +43,8 @@ export WARNING="${RED}\e[5m"
 export UNDERLINE="\e[4m"
 
 # // Exporting URL Host
-export Server_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/test"
-export Server1_URL="raw.githubusercontent.com/NevermoreSSH/Blueblue/main/limit"
+export Server_URL="raw.githubusercontent.com/LamonLind/Blue/main/test"
+export Server1_URL="raw.githubusercontent.com/LamonLind/Blue/main/limit"
 export Server_Port="443"
 export Server_IP="underfined"
 export Script_Mode="Stable"
@@ -105,6 +105,8 @@ sed -i '/#vmessworry$/a\### '"$user $exp"'\
 sed -i '/#vmesskuota$/a\### '"$user $exp"'\
 },{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#vmessgrpc$/a\#vmsg '"$user $exp"'\
+},{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
+sed -i '/#vmexxhttp$/a\#vmsx '"$user $exp"'\
 },{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
 asu=`cat<<EOF
       {
@@ -211,6 +213,36 @@ ami=`cat<<EOF
       "tls": "tls"
 }
 EOF`
+xhttp_tls=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "VMESS_XHTTP_TLS_${user}",
+      "add": "${domain}",
+      "port": "443",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "xhttp",
+      "path": "/vmess-xhttp",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "tls"
+}
+EOF`
+xhttp_ntls=`cat<<EOF
+      {
+      "v": "2",
+      "ps": "VMESS_XHTTP_NTLS_${user}",
+      "add": "${domain}",
+      "port": "80",
+      "id": "${uuid}",
+      "aid": "0",
+      "net": "xhttp",
+      "path": "/vmess-xhttp",
+      "type": "none",
+      "host": "${domain}",
+      "tls": "none"
+}
+EOF`
 vmess_base641=$( base64 -w 0 <<< $vmess_json1)
 vmess_base642=$( base64 -w 0 <<< $vmess_json2)
 vmess_base643=$( base64 -w 0 <<< $vmess_json3)
@@ -225,14 +257,16 @@ vmesslink4="vmess://$(echo $aso | base64 -w 0)"
 vmesslink5="vmess://$(echo $grpc | base64 -w 0)"
 vmesslink6="vmess://$(echo $ama | base64 -w 0)"
 vmesslink7="vmess://$(echo $ami | base64 -w 0)"
+vmesslink8="vmess://$(echo $xhttp_tls | base64 -w 0)"
+vmesslink9="vmess://$(echo $xhttp_ntls | base64 -w 0)"
 cat > /home/vps/public_html/vmess-$user.txt <<-END
 ====================================================================
              P R O J E C T  O F  N E V E R M O R E S S H
                        [Freedom Internet]
 ====================================================================
-        https://github.com/NevermoreSSH/Blueblue
+        https://github.com/LamonLind/Blue
 ====================================================================
-              Format Vmess WS/GRPC - BBv2
+              Format Vmess WS/GRPC/XHTTP - BBv2
 ====================================================================
 
 _______________________________________________________
@@ -243,6 +277,10 @@ _______________________________________________________
 Link none TLS : vmess://$(echo $ask | base64 -w 0)
 _______________________________________________________
 Link GRPC : vmess://$(echo $grpc | base64 -w 0)
+_______________________________________________________
+Link XHTTP TLS : vmess://$(echo $xhttp_tls | base64 -w 0)
+_______________________________________________________
+Link XHTTP none TLS : vmess://$(echo $xhttp_ntls | base64 -w 0)
 _______________________________________________________
 Expired On : $exp
 
@@ -261,8 +299,9 @@ echo -e "Port GRPC : ${tls}" | tee -a /etc/log-create-user.log
 echo -e "id : ${uuid}" | tee -a /etc/log-create-user.log
 echo -e "alterId : 0" | tee -a /etc/log-create-user.log
 echo -e "Security : auto" | tee -a /etc/log-create-user.log
-echo -e "Network : ws/grpc" | tee -a /etc/log-create-user.log
+echo -e "Network : ws/grpc/xhttp" | tee -a /etc/log-create-user.log
 echo -e "Path : /vmess" | tee -a /etc/log-create-user.log
+echo -e "Path : /vmess-xhttp" | tee -a /etc/log-create-user.log
 #echo -e "Path : /worryfree" | tee -a /etc/log-create-user.log
 #echo -e "Path : /kuota-habis" | tee -a /etc/log-create-user.log
 echo -e "ServiceName : vmess-grpc" | tee -a /etc/log-create-user.log
@@ -280,6 +319,10 @@ echo -e "Link none TLS : ${vmesslink2}" | tee -a /etc/log-create-user.log
 #echo -e "Link none TLS (Kouta-Habis) : ${vmesslink4}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link GRPC : ${vmesslink5}" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "Link XHTTP TLS : ${vmesslink8}" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "Link XHTTP none TLS : ${vmesslink9}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link Vmess Config : http://${domain}:81/vmess-$user.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log

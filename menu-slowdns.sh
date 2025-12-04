@@ -148,7 +148,7 @@ install_slowdns() {
     
     # Install golang
     echo -e "${YELLOW}[*] Installing golang...${NC}"
-    GO_V="1.22.5"
+    GO_V="1.25.5"
     wget -q https://dl.google.com/go/go${GO_V}.linux-amd64.tar.gz
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error: Failed to download golang${NC}"

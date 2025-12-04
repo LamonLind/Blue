@@ -197,6 +197,7 @@ wget -q -O /usr/bin/menu-ss "https://raw.githubusercontent.com/LamonLind/Blue/ma
 wget -q -O /usr/bin/menu-trojan "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trojan.sh"
 wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trgo.sh"
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
+wget -q -O /usr/bin/menu-slowdns "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-slowdns.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
 wget -q -O /usr/bin/bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/bckpbot.sh"
@@ -235,6 +236,7 @@ chmod +x /usr/bin/menu-socks
 chmod +x /usr/bin/menu-trojan
 chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
+chmod +x /usr/bin/menu-slowdns
 chmod +x /usr/bin/menu-bckp
 chmod +x /usr/bin/menu
 chmod +x /usr/bin/bckp

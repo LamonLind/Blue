@@ -23,7 +23,6 @@ IBlue='\033[0;94m'        # Blue
 IPurple='\033[0;95m'      # Purple
 ICyan='\033[0;96m'        # Cyan
 IWhite='\033[0;97m'       # White
-NC='\e[0m'
 green() { echo -e "\\033[32;1m${*}\\033[0m"; }
 red() { echo -e "\\033[31;1m${*}\\033[0m"; }
 
@@ -149,7 +148,7 @@ install_slowdns() {
     
     # Install golang
     echo -e "${YELLOW}[*] Installing golang...${NC}"
-    GO_V="1.21.5"
+    GO_V="1.22.5"
     wget -q https://dl.google.com/go/go${GO_V}.linux-amd64.tar.gz
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error: Failed to download golang${NC}"

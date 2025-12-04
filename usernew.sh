@@ -98,6 +98,23 @@ OhpSSH=`cat /root/log-install.txt | grep -w "OHP SSH" | cut -d: -f2 | awk '{prin
 OhpDB=`cat /root/log-install.txt | grep -w "OHP DBear" | cut -d: -f2 | awk '{print $1}'`
 OhpOVPN=`cat /root/log-install.txt | grep -w "OHP OpenVPN" | cut -d: -f2 | awk '{print $1}'`
 
+# SlowDNS Configuration
+DNSTT_CONFIG="/etc/dnstt/config"
+SLOWDNS_PORTS="22,53,5300,80,443"
+if [ -f "$DNSTT_CONFIG" ]; then
+    nameserver=$(grep -E "^NAMESERVER=" "$DNSTT_CONFIG" | cut -d'=' -f2)
+    pubkey=$(grep -E "^PUBKEY=" "$DNSTT_CONFIG" | cut -d'=' -f2)
+    if [ -n "$nameserver" ] && [ -n "$pubkey" ]; then
+        slowdns_installed="true"
+    else
+        slowdns_installed="false"
+    fi
+else
+    nameserver=""
+    pubkey=""
+    slowdns_installed="false"
+fi
+
 sleep 1
 clear
 useradd -e `date -d "$masaaktif days" +"%Y-%m-%d"` -s /bin/false -M $Login
@@ -133,8 +150,21 @@ UDPGW : 7100-7300
 ====================================================================
 Payload WSS: GET wss://BUG.COM/ HTTP/1.1[crlf]Host: $domain[crlf]Upgrade: websocket[crlf][crlf] 
 ====================================================================
-
 END
+
+# Append SlowDNS info to the SSH config file if installed
+if [ "$slowdns_installed" = "true" ]; then
+cat >> /home/vps/public_html/ssh-$Login.txt <<-END
+
+====================================================================
+        SlowDNS Information       
+====================================================================
+NS Host : $nameserver
+Pub Key : $pubkey
+SlowDNS Port : $SLOWDNS_PORTS
+====================================================================
+END
+fi
 
 if [[ ! -z "${PID}" ]]; then
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
@@ -146,16 +176,20 @@ echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "IP Address : $IP" | tee -a /etc/log-create-user.log
 echo -e "Host : $domen" | tee -a /etc/log-create-user.log
-#echo -e "NS Host : $nameserver" | tee -a /etc/log-create-user.log
-#echo -e "Pubkey : $pubkey" | tee -a /etc/log-create-user.log
 echo -e "OpenSSH : $opensh" | tee -a /etc/log-create-user.log
 echo -e "Dropbear : $db" | tee -a /etc/log-create-user.log
-#echo -e "SlowDNS : 22,53,5300,80,443" | tee -a /etc/log-create-user.log
-#echo -e "UDP Custom : 1-65535" | tee -a /etc/log-create-user.log
 echo -e "SSH-WS : $portsshws" | tee -a /etc/log-create-user.log
 echo -e "SSH-SSL-WS : $wsssl" | tee -a /etc/log-create-user.log
 echo -e "SSL/TLS : $ssl" | tee -a /etc/log-create-user.log
 echo -e "UDPGW : 7100-7300" | tee -a /etc/log-create-user.log
+if [ "$slowdns_installed" = "true" ]; then
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "\E[0;41;36m         SlowDNS Information       \E[0m" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "NS Host : $nameserver" | tee -a /etc/log-create-user.log
+echo -e "Pub Key : $pubkey" | tee -a /etc/log-create-user.log
+echo -e "SlowDNS Port : $SLOWDNS_PORTS" | tee -a /etc/log-create-user.log
+fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link SSH Config : http://${domain}:81/ssh-$Login.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
@@ -188,16 +222,20 @@ echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "IP Address : $IP" | tee -a /etc/log-create-user.log
 echo -e "Host : $domen" | tee -a /etc/log-create-user.log
-#echo -e "NS Host : $nameserver" | tee -a /etc/log-create-user.log
-#echo -e "Pubkey : $pubkey" | tee -a /etc/log-create-user.log
 echo -e "OpenSSH : $opensh" | tee -a /etc/log-create-user.log
 echo -e "Dropbear : $db" | tee -a /etc/log-create-user.log
-#echo -e "SlowDNS : 22,53,5300,80,443" | tee -a /etc/log-create-user.log
-#echo -e "UDP Custom : 1-65535" | tee -a /etc/log-create-user.log
 echo -e "SSH-WS : $portsshws" | tee -a /etc/log-create-user.log
 echo -e "SSH-SSL-WS : $wsssl" | tee -a /etc/log-create-user.log
 echo -e "SSL/TLS : $ssl" | tee -a /etc/log-create-user.log
 echo -e "UDPGW : 7100-7300" | tee -a /etc/log-create-user.log
+if [ "$slowdns_installed" = "true" ]; then
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "\E[0;41;36m         SlowDNS Information       \E[0m" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "NS Host : $nameserver" | tee -a /etc/log-create-user.log
+echo -e "Pub Key : $pubkey" | tee -a /etc/log-create-user.log
+echo -e "SlowDNS Port : $SLOWDNS_PORTS" | tee -a /etc/log-create-user.log
+fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link SSH Config : http://${domain}:81/ssh-$Login.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log

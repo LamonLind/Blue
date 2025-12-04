@@ -100,11 +100,15 @@ OhpOVPN=`cat /root/log-install.txt | grep -w "OHP OpenVPN" | cut -d: -f2 | awk '
 
 # SlowDNS Configuration
 DNSTT_CONFIG="/etc/dnstt/config"
+SLOWDNS_PORTS="22,53,5300,80,443"
 if [ -f "$DNSTT_CONFIG" ]; then
-    source "$DNSTT_CONFIG"
-    nameserver="$NAMESERVER"
-    pubkey="$PUBKEY"
-    slowdns_installed="true"
+    nameserver=$(grep -E "^NAMESERVER=" "$DNSTT_CONFIG" | cut -d'=' -f2)
+    pubkey=$(grep -E "^PUBKEY=" "$DNSTT_CONFIG" | cut -d'=' -f2)
+    if [ -n "$nameserver" ] && [ -n "$pubkey" ]; then
+        slowdns_installed="true"
+    else
+        slowdns_installed="false"
+    fi
 else
     nameserver=""
     pubkey=""
@@ -157,7 +161,7 @@ cat >> /home/vps/public_html/ssh-$Login.txt <<-END
 ====================================================================
 NS Host : $nameserver
 Pub Key : $pubkey
-SlowDNS Port : 22,53,5300,80,443
+SlowDNS Port : $SLOWDNS_PORTS
 ====================================================================
 END
 fi
@@ -184,7 +188,7 @@ echo -e "\E[0;41;36m         SlowDNS Information       \E[0m" | tee -a /etc/log-
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "NS Host : $nameserver" | tee -a /etc/log-create-user.log
 echo -e "Pub Key : $pubkey" | tee -a /etc/log-create-user.log
-echo -e "SlowDNS Port : 22,53,5300,80,443" | tee -a /etc/log-create-user.log
+echo -e "SlowDNS Port : $SLOWDNS_PORTS" | tee -a /etc/log-create-user.log
 fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link SSH Config : http://${domain}:81/ssh-$Login.txt" | tee -a /etc/log-create-user.log
@@ -230,7 +234,7 @@ echo -e "\E[0;41;36m         SlowDNS Information       \E[0m" | tee -a /etc/log-
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "NS Host : $nameserver" | tee -a /etc/log-create-user.log
 echo -e "Pub Key : $pubkey" | tee -a /etc/log-create-user.log
-echo -e "SlowDNS Port : 22,53,5300,80,443" | tee -a /etc/log-create-user.log
+echo -e "SlowDNS Port : $SLOWDNS_PORTS" | tee -a /etc/log-create-user.log
 fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link SSH Config : http://${domain}:81/ssh-$Login.txt" | tee -a /etc/log-create-user.log

@@ -87,7 +87,7 @@ delete_vmess_user() {
     if [ -n "$exp" ]; then
         sed -i "/^#vms $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#vmsg $user $exp/,/^},{/d" /etc/xray/config.json
-        rm -f /etc/xray/$user-tls.json /etc/xray/$user-none.json
+        rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
         rm -f /home/vps/public_html/vmess-$user.txt
         echo -e "[${GREEN} OKEY ${NC}] VMess user $user deleted (bandwidth limit exceeded)"
     fi

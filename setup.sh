@@ -301,6 +301,8 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 END
 
 # Create systemd service for bandwidth limit checking every 2 seconds
+# Note: 2-second interval as specified in requirements for fast limit enforcement
+# Adjust 'sleep 2' to higher value (e.g., 30) if system load is a concern
 cat > /etc/systemd/system/bw-limit-check.service <<-END
 [Unit]
 Description=Professional Data Usage Limit Checker Service

@@ -34,7 +34,7 @@ UWhite='\033[4;37m'
 
 # // Configuration
 WARNING_THRESHOLD=80  # Percentage at which to show warning (0-100)
-CHECK_INTERVAL=2      # Check interval in seconds
+# Note: Check interval is configured in systemd service (/etc/systemd/system/bw-limit-check.service)
 
 # // Root Checking
 if [ "${EUID}" -ne 0 ]; then
@@ -418,10 +418,12 @@ save_usage_to_file() {
         current_usage=$(get_xray_user_bandwidth "$username")
     fi
     
-    # Update usage file
-    sed -i "/^$username /d" "$BW_USAGE_FILE"
+    # Read stored usage BEFORE deleting the entry
     local stored_usage=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
     stored_usage=${stored_usage:-0}
+    
+    # Update usage file
+    sed -i "/^$username /d" "$BW_USAGE_FILE"
     local total=$((stored_usage + current_usage))
     echo "$username $total" >> "$BW_USAGE_FILE"
 }
@@ -805,7 +807,12 @@ data_limit_menu() {
             data_limit_menu
             ;;
         x|X)
-            menu
+            # Exit to main menu (menu command is available when script is installed)
+            if command -v menu &>/dev/null; then
+                menu
+            else
+                exit 0
+            fi
             ;;
         *)
             echo -e "${RED}Invalid option${NC}"

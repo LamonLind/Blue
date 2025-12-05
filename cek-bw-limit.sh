@@ -15,6 +15,9 @@ export YELLOW='\033[0;33m'
 export BLUE='\033[0;34m'
 export NC='\033[0m'
 
+# // Configuration
+WARNING_THRESHOLD=80  # Percentage at which to show warning (0-100)
+
 # // Root Checking
 if [ "${EUID}" -ne 0 ]; then
     echo -e "[${RED} EROR ${NC}] Please Run This Script As Root User !"
@@ -42,10 +45,15 @@ get_user_bandwidth() {
     if [ -f "$_Xray" ]; then
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
-            # Get upload bytes
-            local up_bytes=$(echo "$stats" | grep -A1 "\"name\": \"user>>>$username>>>traffic>>>uplink\"" | grep "value" | grep -oP '\d+' | head -1)
-            # Get download bytes  
-            local down_bytes=$(echo "$stats" | grep -A1 "\"name\": \"user>>>$username>>>traffic>>>downlink\"" | grep "value" | grep -oP '\d+' | head -1)
+            # Parse upload and download bytes using awk for efficiency
+            local traffic=$(echo "$stats" | awk -v user="$username" '
+                BEGIN { up=0; down=0 }
+                /"name":.*user>>>'user'>>>traffic>>>uplink"/ { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); up=$2 } }
+                /"name":.*user>>>'user'>>>traffic>>>downlink"/ { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); down=$2 } }
+                END { print up " " down }
+            ')
+            local up_bytes=$(echo "$traffic" | awk '{print $1}')
+            local down_bytes=$(echo "$traffic" | awk '{print $2}')
             
             up_bytes=${up_bytes:-0}
             down_bytes=${down_bytes:-0}
@@ -113,9 +121,12 @@ delete_trojan_user() {
 # // Function to delete SSH user (non-main accounts only)
 delete_ssh_user() {
     local user=$1
-    # Skip main/root accounts
+    # Skip main/root accounts and system users
+    # Check if user exists and has UID >= UID_MIN from /etc/login.defs (default 1000)
+    local uid_min=$(grep "^UID_MIN" /etc/login.defs 2>/dev/null | awk '{print $2}')
+    uid_min=${uid_min:-1000}
     local uid=$(id -u "$user" 2>/dev/null)
-    if [ -n "$uid" ] && [ "$uid" -ge 1000 ]; then
+    if [ -n "$uid" ] && [ "$uid" -ge "$uid_min" ]; then
         userdel "$user" 2>/dev/null
         rm -f /home/vps/public_html/ssh-$user.txt
         echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
@@ -199,7 +210,7 @@ display_bandwidth_usage() {
         elif [ "$current_usage" -ge $(mb_to_bytes "$limit_mb") ]; then
             status="EXCEEDED"
             color="${RED}"
-        elif [ "$current_usage" -ge $(mb_to_bytes $((limit_mb * 80 / 100))) ]; then
+        elif [ "$current_usage" -ge $(mb_to_bytes $((limit_mb * WARNING_THRESHOLD / 100))) ]; then
             status="WARNING"
             color="${YELLOW}"
         fi

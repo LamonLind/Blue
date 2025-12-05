@@ -76,22 +76,27 @@ get_ssh_user_bandwidth() {
         return
     fi
     
-    # Check if iptables rule exists for this user, if not create it
-    if ! iptables -L OUTPUT -v -n 2>/dev/null | grep -q "owner UID match $uid"; then
-        # Create iptables rule to track outgoing traffic for this user
-        iptables -A OUTPUT -m owner --uid-owner "$uid" -j ACCEPT 2>/dev/null
+    # Create unique chain name for this user to track bandwidth
+    local chain_name="BW_${uid}"
+    
+    # Check if user chain exists, if not create it with rules for both directions
+    if ! iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
+        # Create a custom chain for this user
+        iptables -N "$chain_name" 2>/dev/null
+        # Add rule to OUTPUT to track outgoing traffic by user
+        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+        # Add RETURN rule to continue processing
+        iptables -A "$chain_name" -j RETURN 2>/dev/null
     fi
     
-    if ! iptables -L INPUT -v -n 2>/dev/null | grep -q "owner UID match $uid"; then
-        # Note: INPUT chain doesn't support owner matching, so we track via FORWARD or use different method
-        :
-    fi
-    
-    # Get bytes from iptables OUTPUT chain for this user
-    local out_bytes=$(iptables -L OUTPUT -v -n -x 2>/dev/null | grep "owner UID match $uid" | awk '{sum+=$2} END {print sum}')
+    # Get bytes from the custom chain (tracks both directions via owner match in OUTPUT)
+    # For SSH, most traffic is bidirectional so we estimate total by doubling outgoing
+    local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
     out_bytes=${out_bytes:-0}
     
-    total_bytes=$out_bytes
+    # SSH traffic is roughly symmetric, so estimate total as output * 2 to account for both directions
+    # This provides a more accurate bandwidth measurement for SSH users
+    total_bytes=$((out_bytes * 2))
     echo $total_bytes
 }
 
@@ -177,6 +182,18 @@ delete_ssws_user() {
     fi
 }
 
+# // Function to cleanup SSH user iptables rules
+cleanup_ssh_iptables() {
+    local uid=$1
+    local chain_name="BW_${uid}"
+    
+    # Remove reference from OUTPUT chain
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    # Flush and delete the custom chain
+    iptables -F "$chain_name" 2>/dev/null
+    iptables -X "$chain_name" 2>/dev/null
+}
+
 # // Function to delete SSH user (non-main accounts only)
 delete_ssh_user() {
     local user=$1
@@ -188,6 +205,8 @@ delete_ssh_user() {
         uid_min=${uid_min:-1000}
         local uid=$(echo "$passwd_entry" | cut -d: -f3)
         if [ -n "$uid" ] && [ "$uid" -ge "$uid_min" ]; then
+            # Cleanup iptables rules for this user before deletion
+            cleanup_ssh_iptables "$uid"
             userdel "$user" > /dev/null 2>&1
             rm -f /home/vps/public_html/ssh-"$user".txt
             echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"

@@ -198,6 +198,8 @@ wget -q -O /usr/bin/menu-trojan "https://raw.githubusercontent.com/LamonLind/Blu
 wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trgo.sh"
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
 wget -q -O /usr/bin/menu-slowdns "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-slowdns.sh"
+wget -q -O /usr/bin/menu-captured-hosts "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-captured-hosts.sh"
+wget -q -O /usr/bin/capture-host "https://raw.githubusercontent.com/LamonLind/Blue/main/capture-host.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
 wget -q -O /usr/bin/bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/bckpbot.sh"
@@ -237,6 +239,8 @@ chmod +x /usr/bin/menu-trojan
 chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
 chmod +x /usr/bin/menu-slowdns
+chmod +x /usr/bin/menu-captured-hosts
+chmod +x /usr/bin/capture-host
 chmod +x /usr/bin/menu-bckp
 chmod +x /usr/bin/menu
 chmod +x /usr/bin/bckp
@@ -286,6 +290,12 @@ cat > /etc/cron.d/cl_otm <<-END
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 2 1 * * * root /usr/bin/clearlog
+END
+
+cat > /etc/cron.d/capture_host <<-END
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+*/30 * * * * root /usr/bin/capture-host >/dev/null 2>&1
 END
 
 cat > /home/re_otm <<-END

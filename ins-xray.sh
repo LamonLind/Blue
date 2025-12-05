@@ -94,6 +94,7 @@ touch /var/log/xray/access.log
 touch /var/log/xray/error.log
 touch /var/log/xray/access2.log
 touch /var/log/xray/error2.log
+touch /etc/xray/captured-hosts.txt
 # Make Log Autokill & Log Autoreboot
 rm -fr /root/log-limit.txt
 rm -fr /root/log-reboot.txt

@@ -244,16 +244,117 @@ remove_host() {
     echo -e ""
 }
 
+# Function to check if auto capture service is enabled and running
+is_auto_capture_enabled() {
+    if systemctl is-active --quiet capture-host 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to create the continuous capture script
+create_continuous_capture_script() {
+    cat > /usr/bin/capture-host-daemon <<'SCRIPT'
+#!/bin/bash
+# Continuous Host Capture Daemon
+# Runs capture-host script continuously in a loop
+
+while true; do
+    /usr/bin/capture-host >/dev/null 2>&1
+    sleep 60
+done
+SCRIPT
+    chmod +x /usr/bin/capture-host-daemon
+}
+
+# Function to create systemd service for continuous capture
+create_capture_service() {
+    cat > /etc/systemd/system/capture-host.service <<EOF
+[Unit]
+Description=Continuous Host Capture Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/capture-host-daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+}
+
+# Function to enable auto capture
+enable_auto_capture() {
+    clear
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "\E[44;1;39m                  ⇱ ENABLE AUTO CAPTURE ⇲                    \E[0m"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e ""
+    
+    if is_auto_capture_enabled; then
+        echo -e " ${INFO} Auto capture is already running."
+    else
+        # Create the daemon script
+        create_continuous_capture_script
+        # Create the systemd service
+        create_capture_service
+        # Enable and start the service
+        systemctl enable capture-host >/dev/null 2>&1
+        systemctl start capture-host >/dev/null 2>&1
+        # Also remove old cron job if exists
+        rm -f /etc/cron.d/capture_host 2>/dev/null
+        echo -e " ${OKEY} Auto capture has been enabled."
+        echo -e " ${INFO} Hosts will be captured continuously (every 60 seconds)."
+    fi
+    echo -e ""
+}
+
+# Function to disable auto capture
+disable_auto_capture() {
+    clear
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "\E[44;1;39m                  ⇱ DISABLE AUTO CAPTURE ⇲                   \E[0m"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e ""
+    
+    if is_auto_capture_enabled; then
+        systemctl stop capture-host >/dev/null 2>&1
+        systemctl disable capture-host >/dev/null 2>&1
+        echo -e " ${OKEY} Auto capture has been disabled."
+    else
+        echo -e " ${INFO} Auto capture is already disabled."
+    fi
+    echo -e ""
+}
+
+# Get auto capture status for display
+get_auto_capture_status() {
+    if is_auto_capture_enabled; then
+        echo -e "${BIGreen}ON${NC}"
+    else
+        echo -e "${BIRed}OFF${NC}"
+    fi
+}
+
 # Main menu
 clear
+AUTO_STATUS=$(get_auto_capture_status)
 echo -e "${BICyan} ┌─────────────────────────────────────────────────────┐${NC}"
 echo -e "       ${BIWhite}${UWhite}CAPTURED HOSTS MENU ${NC}"
+echo -e ""
+echo -e "     ${BICyan}Auto Capture Status: ${AUTO_STATUS}"
 echo -e ""
 echo -e "     ${BICyan}[${BIWhite}1${BICyan}] View Captured Hosts      "
 echo -e "     ${BICyan}[${BIWhite}2${BICyan}] Scan for New Hosts      "
 echo -e "     ${BICyan}[${BIWhite}3${BICyan}] Add Host Manually      "
 echo -e "     ${BICyan}[${BIWhite}4${BICyan}] Remove Host     "
 echo -e "     ${BICyan}[${BIWhite}5${BICyan}] Clear All Hosts     "
+echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Turn ON Auto Capture     "
+echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Turn OFF Auto Capture     "
 echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
 echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
 echo ""
@@ -265,6 +366,8 @@ case $opt in
 3) add_host_manual ;;
 4) remove_host ;;
 5) clear_hosts ;;
+6) enable_auto_capture ;;
+7) disable_auto_capture ;;
 0) clear ; menu ;;
 x) exit ;;
 *) echo -e "" ; echo "Press any key to back on menu" ; sleep 1 ; menu ;;

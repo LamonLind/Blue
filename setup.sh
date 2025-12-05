@@ -300,21 +300,27 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 */30 * * * * root /usr/bin/capture-host >/dev/null 2>&1
 END
 
-# Create systemd service for bandwidth limit checking every 10 seconds
+# Create systemd service for bandwidth limit checking every 2 seconds
 cat > /etc/systemd/system/bw-limit-check.service <<-END
 [Unit]
-Description=Bandwidth Limit Checker Service
+Description=Professional Data Usage Limit Checker Service
 After=network.target xray.service
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 10; done'
+ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 2; done'
 Restart=always
-RestartSec=5
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
 END
+
+# Create persistent usage storage directory
+mkdir -p /etc/xray
+touch /etc/xray/bw-limit.conf 2>/dev/null
+touch /etc/xray/bw-usage.conf 2>/dev/null
+touch /etc/xray/bw-disabled.conf 2>/dev/null
 
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable bw-limit-check >/dev/null 2>&1

@@ -87,7 +87,7 @@ delete_vmess_user() {
     if [ -n "$exp" ]; then
         sed -i "/^#vms $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#vmsg $user $exp/,/^},{/d" /etc/xray/config.json
-        rm -f /etc/xray/$user-tls.json /etc/xray/$user-none.json
+        rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
         rm -f /home/vps/public_html/vmess-$user.txt
         echo -e "[${GREEN} OKEY ${NC}] VMess user $user deleted (bandwidth limit exceeded)"
     fi
@@ -134,15 +134,18 @@ delete_ssws_user() {
 # // Function to delete SSH user (non-main accounts only)
 delete_ssh_user() {
     local user=$1
-    # Skip main/root accounts and system users
-    # Check if user exists and has UID >= UID_MIN from /etc/login.defs (default 1000)
-    local uid_min=$(grep "^UID_MIN" /etc/login.defs 2>/dev/null | awk '{print $2}')
-    uid_min=${uid_min:-1000}
-    local uid=$(id -u "$user" 2>/dev/null)
-    if [ -n "$uid" ] && [ "$uid" -ge "$uid_min" ]; then
-        userdel "$user" 2>/dev/null
-        rm -f /home/vps/public_html/ssh-$user.txt
-        echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
+    # Check if user exists and get UID using getent (consistent with menu-ssh.sh)
+    local passwd_entry=$(getent passwd "$user" 2>/dev/null)
+    if [ -n "$passwd_entry" ]; then
+        # Get UID from passwd entry to ensure we don't delete system users
+        local uid_min=$(grep "^UID_MIN" /etc/login.defs 2>/dev/null | awk '{print $2}')
+        uid_min=${uid_min:-1000}
+        local uid=$(echo "$passwd_entry" | cut -d: -f3)
+        if [ -n "$uid" ] && [ "$uid" -ge "$uid_min" ]; then
+            userdel "$user" > /dev/null 2>&1
+            rm -f /home/vps/public_html/ssh-"$user".txt
+            echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
+        fi
     fi
 }
 

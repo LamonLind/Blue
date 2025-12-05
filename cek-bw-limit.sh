@@ -134,51 +134,114 @@ bytes_to_mb() {
 # // Function to delete vmess user
 delete_vmess_user() {
     local user=$1
-    local exp=$(grep -wE "^#vmsg $user" "/etc/xray/config.json" 2>/dev/null | cut -d ' ' -f 3 | sort | uniq | head -1)
+    local deleted=0
+    
+    # Get exp from any vmess-related tag (try multiple patterns)
+    local exp=$(grep -E "^#(vms|vmsg|vmsx) $user " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+    
     if [ -n "$exp" ]; then
+        # Delete all vmess-related entries for this user
         sed -i "/^#vms $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#vmsg $user $exp/,/^},{/d" /etc/xray/config.json
-        rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
-        rm -f /home/vps/public_html/vmess-$user.txt
+        sed -i "/^#vmsx $user $exp/,/^},{/d" /etc/xray/config.json
+        # Also delete ### entries (used for vmess quota/worryfree)
+        sed -i "/^### $user $exp/,/^},{/d" /etc/xray/config.json
+        deleted=1
+    fi
+    
+    # Cleanup user files regardless of config entry
+    rm -f "/etc/xray/vmess-${user}-tls.json" "/etc/xray/vmess-${user}-nontls.json"
+    rm -f "/home/vps/public_html/vmess-${user}.txt"
+    
+    if [ "$deleted" -eq 1 ]; then
         echo -e "[${GREEN} OKEY ${NC}] VMess user $user deleted (bandwidth limit exceeded)"
+        return 0
+    else
+        echo -e "[${YELLOW} WARN ${NC}] VMess user $user not found in config"
+        return 1
     fi
 }
 
 # // Function to delete vless user
 delete_vless_user() {
     local user=$1
-    local exp=$(grep -wE "^#vlsg $user" "/etc/xray/config.json" 2>/dev/null | cut -d ' ' -f 3 | sort | uniq | head -1)
+    local deleted=0
+    
+    # Get exp from any vless-related tag (try multiple patterns)
+    local exp=$(grep -E "^#(vls|vlsg|vlsx) $user " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+    
     if [ -n "$exp" ]; then
+        # Delete all vless-related entries for this user
         sed -i "/^#vls $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#vlsg $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#vlsx $user $exp/,/^},{/d" /etc/xray/config.json
-        rm -f /home/vps/public_html/vless-$user.txt
+        deleted=1
+    fi
+    
+    # Cleanup user files regardless of config entry
+    rm -f "/home/vps/public_html/vless-${user}.txt"
+    
+    if [ "$deleted" -eq 1 ]; then
         echo -e "[${GREEN} OKEY ${NC}] Vless user $user deleted (bandwidth limit exceeded)"
+        return 0
+    else
+        echo -e "[${YELLOW} WARN ${NC}] Vless user $user not found in config"
+        return 1
     fi
 }
 
 # // Function to delete trojan user
 delete_trojan_user() {
     local user=$1
-    local exp=$(grep -wE "^#trg $user" "/etc/xray/config.json" 2>/dev/null | cut -d ' ' -f 3 | sort | uniq | head -1)
+    local deleted=0
+    
+    # Get exp from any trojan-related tag (try multiple patterns)
+    local exp=$(grep -E "^#(tr|trg) $user " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+    
     if [ -n "$exp" ]; then
+        # Delete all trojan-related entries for this user
         sed -i "/^#tr $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#trg $user $exp/,/^},{/d" /etc/xray/config.json
-        rm -f /home/vps/public_html/trojan-$user.txt
+        deleted=1
+    fi
+    
+    # Cleanup user files regardless of config entry
+    rm -f "/home/vps/public_html/trojan-${user}.txt"
+    
+    if [ "$deleted" -eq 1 ]; then
         echo -e "[${GREEN} OKEY ${NC}] Trojan user $user deleted (bandwidth limit exceeded)"
+        return 0
+    else
+        echo -e "[${YELLOW} WARN ${NC}] Trojan user $user not found in config"
+        return 1
     fi
 }
 
 # // Function to delete shadowsocks user
 delete_ssws_user() {
     local user=$1
-    local exp=$(grep -wE "^#sswg $user" "/etc/xray/config.json" 2>/dev/null | cut -d ' ' -f 3 | sort | uniq | head -1)
+    local deleted=0
+    
+    # Get exp from any shadowsocks-related tag (try multiple patterns)
+    local exp=$(grep -E "^#(ssw|sswg) $user " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+    
     if [ -n "$exp" ]; then
+        # Delete all shadowsocks-related entries for this user
         sed -i "/^#ssw $user $exp/,/^},{/d" /etc/xray/config.json
         sed -i "/^#sswg $user $exp/,/^},{/d" /etc/xray/config.json
-        rm -f /home/vps/public_html/sodosokws-$user.txt
-        rm -f /home/vps/public_html/sodosokgrpc-$user.txt
+        deleted=1
+    fi
+    
+    # Cleanup user files regardless of config entry
+    rm -f "/home/vps/public_html/sodosokws-${user}.txt"
+    rm -f "/home/vps/public_html/sodosokgrpc-${user}.txt"
+    
+    if [ "$deleted" -eq 1 ]; then
         echo -e "[${GREEN} OKEY ${NC}] Shadowsocks user $user deleted (bandwidth limit exceeded)"
+        return 0
+    else
+        echo -e "[${YELLOW} WARN ${NC}] Shadowsocks user $user not found in config"
+        return 1
     fi
 }
 
@@ -210,8 +273,11 @@ delete_ssh_user() {
             userdel "$user" > /dev/null 2>&1
             rm -f /home/vps/public_html/ssh-"$user".txt
             echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
+            return 0
         fi
     fi
+    echo -e "[${YELLOW} WARN ${NC}] SSH user $user not found or is a system user"
+    return 1
 }
 
 # // Main function to check bandwidth limits

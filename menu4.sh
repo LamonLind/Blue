@@ -251,6 +251,7 @@ echo -e "     ${BICyan}[${BIWhite}23${BICyan}] DNS CHANGER ${BICyan}${BIYellow}$
 echo -e "     ${BICyan}[${BIWhite}24${BICyan}] NETFLIX CHECKER ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}25${BICyan}] TENDANG ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}26${BICyan}] SLOWDNS MENU ${BICyan}${BIYellow}${BICyan}${NC}"
+echo -e "     ${BICyan}[${BIWhite}27${BICyan}] CAPTURED HOSTS ${BICyan}${BIYellow}${BICyan}${NC}"
 #echo -e "     ${BICyan}[${BIWhite}25${BICyan}] DELETE XRAYS USER [${BIWhite} $xrays users ${BICyan}] ${BICyan}${BIYellow}${BICyan}${NC}"
 #echo -e "     ${BICyan}[${BIWhite}30${BICyan}] VLESS CONFIG ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e " "
@@ -294,6 +295,7 @@ case $opt in
 24) clear ; netf ;;
 25) clear ; tendang ;;
 26) clear ; menu-slowdns ;;
+27) clear ; menu-captured-hosts ;;
 55) clear ; wget -q -O /usr/bin/xraychanger "https://raw.githubusercontent.com/LamonLind/Xcore-custompath/main/xraychanger.sh" && chmod +x /usr/bin/xraychanger && xraychanger ;;
 66) clear ; bbr ;;
 77) clear ; wget -q -O /usr/bin/swapram "https://raw.githubusercontent.com/LamonLind/swapram/main/swapram.sh" && chmod +x /usr/bin/swapram && swapram ;;

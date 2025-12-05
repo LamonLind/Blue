@@ -244,16 +244,81 @@ remove_host() {
     echo -e ""
 }
 
+# Function to check if auto capture is enabled
+is_auto_capture_enabled() {
+    if [ -f "/etc/cron.d/capture_host" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to enable auto capture
+enable_auto_capture() {
+    clear
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "\E[44;1;39m                  ⇱ ENABLE AUTO CAPTURE ⇲                    \E[0m"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e ""
+    
+    if is_auto_capture_enabled; then
+        echo -e " ${INFO} Auto capture is already enabled."
+    else
+        cat > /etc/cron.d/capture_host <<-END
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+*/30 * * * * root /usr/bin/capture-host >/dev/null 2>&1
+END
+        chmod 644 /etc/cron.d/capture_host
+        service cron restart >/dev/null 2>&1
+        echo -e " ${OKEY} Auto capture has been enabled."
+        echo -e " ${INFO} Hosts will be captured automatically every 30 minutes."
+    fi
+    echo -e ""
+}
+
+# Function to disable auto capture
+disable_auto_capture() {
+    clear
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "\E[44;1;39m                  ⇱ DISABLE AUTO CAPTURE ⇲                   \E[0m"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e ""
+    
+    if is_auto_capture_enabled; then
+        rm -f /etc/cron.d/capture_host
+        service cron restart >/dev/null 2>&1
+        echo -e " ${OKEY} Auto capture has been disabled."
+    else
+        echo -e " ${INFO} Auto capture is already disabled."
+    fi
+    echo -e ""
+}
+
+# Get auto capture status for display
+get_auto_capture_status() {
+    if is_auto_capture_enabled; then
+        echo -e "${BIGreen}ON${NC}"
+    else
+        echo -e "${BIRed}OFF${NC}"
+    fi
+}
+
 # Main menu
 clear
+AUTO_STATUS=$(get_auto_capture_status)
 echo -e "${BICyan} ┌─────────────────────────────────────────────────────┐${NC}"
 echo -e "       ${BIWhite}${UWhite}CAPTURED HOSTS MENU ${NC}"
+echo -e ""
+echo -e "     ${BICyan}Auto Capture Status: ${AUTO_STATUS}"
 echo -e ""
 echo -e "     ${BICyan}[${BIWhite}1${BICyan}] View Captured Hosts      "
 echo -e "     ${BICyan}[${BIWhite}2${BICyan}] Scan for New Hosts      "
 echo -e "     ${BICyan}[${BIWhite}3${BICyan}] Add Host Manually      "
 echo -e "     ${BICyan}[${BIWhite}4${BICyan}] Remove Host     "
 echo -e "     ${BICyan}[${BIWhite}5${BICyan}] Clear All Hosts     "
+echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Turn ON Auto Capture     "
+echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Turn OFF Auto Capture     "
 echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
 echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
 echo ""
@@ -265,6 +330,8 @@ case $opt in
 3) add_host_manual ;;
 4) remove_host ;;
 5) clear_hosts ;;
+6) enable_auto_capture ;;
+7) disable_auto_capture ;;
 0) clear ; menu ;;
 x) exit ;;
 *) echo -e "" ; echo "Press any key to back on menu" ; sleep 1 ; menu ;;

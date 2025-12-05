@@ -120,6 +120,26 @@ sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
 fi
 done
 
+#----- Auto Remove Shadowsocks
+data=( `cat /etc/xray/config.json | grep '^#sswg' | cut -d ' ' -f 2 | sort | uniq`);
+now=`date +"%Y-%m-%d"`
+for user in "${data[@]}"
+do
+exp=$(grep -w "^#sswg $user" "/etc/xray/config.json" | cut -d ' ' -f 3 | sort | uniq)
+d1=$(date -d "$exp" +%s)
+d2=$(date -d "$now" +%s)
+exp2=$(( (d1 - d2) / 86400 ))
+if [[ "$exp2" -le "0" ]]; then
+sed -i "/^#ssw $user $exp/,/^},{/d" /etc/xray/config.json
+sed -i "/^#sswg $user $exp/,/^},{/d" /etc/xray/config.json
+rm -f /home/vps/public_html/sodosokws-$user.txt
+rm -f /home/vps/public_html/sodosokgrpc-$user.txt
+# Remove bandwidth limit entry
+sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+fi
+done
+
 #----- Check Bandwidth Limits and Delete Users Exceeding Limits
 /usr/bin/cek-bw-limit check 2>/dev/null
 

@@ -99,7 +99,13 @@ v2ray-menu
 cipher="aes-128-gcm"
 uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
+read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
+bw_limit=${bw_limit:-0}
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+# Add bandwidth limit if specified
+if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
+    /usr/bin/cek-bw-limit add "$user" "$bw_limit" "ssws" >/dev/null 2>&1
+fi
 sed -i '/#ssws$/a\#ssw '"$user $exp"'\
 },{"password": "'""$uuid""'","method": "'""$cipher""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#ssgrpc$/a\#sswg '"$user $exp"'\
@@ -364,6 +370,12 @@ echo -e "Link JSON WS : http://${domain}:81/sodosokws-$user.txt" | tee -a /etc/l
 echo -e "Link JSON gRPC : http://${domain}:81/sodosokgrpc-$user.txt" | tee -a /etc/log-create-user.log
         echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
+        echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
+echo -e "Bandwidth Limit : ${bw_limit} MB" | tee -a /etc/log-create-user.log
+else
+echo -e "Bandwidth Limit : Unlimited" | tee -a /etc/log-create-user.log
+fi
         echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo "" | tee -a /etc/log-create-user.log
 read -n 1 -s -r -p "Press any key to back on menu"

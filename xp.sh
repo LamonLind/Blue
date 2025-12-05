@@ -75,6 +75,10 @@ if [[ "$exp2" -le "0" ]]; then
 sed -i "/^#vms $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vmsg $user $exp/,/^},{/d" /etc/xray/config.json
 rm -f /etc/xray/$user-tls.json /etc/xray/$user-none.json
+rm -f /home/vps/public_html/vmess-$user.txt
+# Remove bandwidth limit entry
+sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
 fi
 done
 
@@ -90,6 +94,10 @@ exp2=$(( (d1 - d2) / 86400 ))
 if [[ "$exp2" -le "0" ]]; then
 sed -i "/^#vls $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vlsg $user $exp/,/^},{/d" /etc/xray/config.json
+rm -f /home/vps/public_html/vless-$user.txt
+# Remove bandwidth limit entry
+sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
 fi
 done
 
@@ -105,8 +113,16 @@ exp2=$(( (d1 - d2) / 86400 ))
 if [[ "$exp2" -le "0" ]]; then
 sed -i "/^#tr $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#trg $user $exp/,/^},{/d" /etc/xray/config.json
+rm -f /home/vps/public_html/trojan-$user.txt
+# Remove bandwidth limit entry
+sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
 fi
 done
+
+#----- Check Bandwidth Limits and Delete Users Exceeding Limits
+/usr/bin/cek-bw-limit check 2>/dev/null
+
 systemctl restart xray
 
 ##------ Auto Remove SSH
@@ -136,6 +152,9 @@ then
 :
 else
 userdel --force $username
+# Remove bandwidth limit entry for SSH user
+sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null
+sed -i "/^${username%% *} /d" /etc/xray/bw-usage.conf 2>/dev/null
 fi
 done
 echo -e "[ ${green}INFO${NC} ] Back to menu in 5 sec . . . "

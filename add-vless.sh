@@ -95,7 +95,13 @@ clear
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
+read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
+bw_limit=${bw_limit:-0}
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+# Add bandwidth limit if specified
+if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
+    /usr/bin/cek-bw-limit add "$user" "$bw_limit" "vless" >/dev/null 2>&1
+fi
 sed -i '/#vless$/a\#vls '"$user $exp"'\
 },{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#vlessgrpc$/a\#vlsg '"$user $exp"'\
@@ -164,6 +170,12 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "Link Vless Config : http://${domain}:81/vless-$user.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
+echo -e "Bandwidth Limit : ${bw_limit} MB" | tee -a /etc/log-create-user.log
+else
+echo -e "Bandwidth Limit : Unlimited" | tee -a /etc/log-create-user.log
+fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo "" | tee -a /etc/log-create-user.log
 read -n 1 -s -r -p "Press any key to back on menu"

@@ -36,8 +36,8 @@ touch "$BW_USAGE_FILE" 2>/dev/null
 _APISERVER=127.0.0.1:10085
 _Xray=/usr/local/bin/xray
 
-# // Function to get user bandwidth usage from xray API
-get_user_bandwidth() {
+# // Function to get user bandwidth usage from xray API (for xray protocols)
+get_xray_user_bandwidth() {
     local username=$1
     local total_bytes=0
     
@@ -59,6 +59,57 @@ get_user_bandwidth() {
             down_bytes=${down_bytes:-0}
             total_bytes=$((up_bytes + down_bytes))
         fi
+    fi
+    
+    echo $total_bytes
+}
+
+# // Function to get SSH user bandwidth usage via iptables accounting
+get_ssh_user_bandwidth() {
+    local username=$1
+    local total_bytes=0
+    
+    # Get user UID
+    local uid=$(id -u "$username" 2>/dev/null)
+    if [ -z "$uid" ]; then
+        echo 0
+        return
+    fi
+    
+    # Create unique chain name for this user to track bandwidth
+    local chain_name="BW_${uid}"
+    
+    # Check if user chain exists, if not create it with rules for both directions
+    if ! iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
+        # Create a custom chain for this user
+        iptables -N "$chain_name" 2>/dev/null
+        # Add rule to OUTPUT to track outgoing traffic by user
+        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+        # Add RETURN rule to continue processing
+        iptables -A "$chain_name" -j RETURN 2>/dev/null
+    fi
+    
+    # Get bytes from the custom chain (tracks both directions via owner match in OUTPUT)
+    # For SSH, most traffic is bidirectional so we estimate total by doubling outgoing
+    local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
+    out_bytes=${out_bytes:-0}
+    
+    # SSH traffic is roughly symmetric, so estimate total as output * 2 to account for both directions
+    # This provides a more accurate bandwidth measurement for SSH users
+    total_bytes=$((out_bytes * 2))
+    echo $total_bytes
+}
+
+# // Function to get user bandwidth usage based on account type
+get_user_bandwidth() {
+    local username=$1
+    local account_type=$2
+    local total_bytes=0
+    
+    if [ "$account_type" = "ssh" ]; then
+        total_bytes=$(get_ssh_user_bandwidth "$username")
+    else
+        total_bytes=$(get_xray_user_bandwidth "$username")
     fi
     
     # Add stored usage from file (for persistent tracking)
@@ -131,6 +182,18 @@ delete_ssws_user() {
     fi
 }
 
+# // Function to cleanup SSH user iptables rules
+cleanup_ssh_iptables() {
+    local uid=$1
+    local chain_name="BW_${uid}"
+    
+    # Remove reference from OUTPUT chain
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    # Flush and delete the custom chain
+    iptables -F "$chain_name" 2>/dev/null
+    iptables -X "$chain_name" 2>/dev/null
+}
+
 # // Function to delete SSH user (non-main accounts only)
 delete_ssh_user() {
     local user=$1
@@ -142,6 +205,8 @@ delete_ssh_user() {
         uid_min=${uid_min:-1000}
         local uid=$(echo "$passwd_entry" | cut -d: -f3)
         if [ -n "$uid" ] && [ "$uid" -ge "$uid_min" ]; then
+            # Cleanup iptables rules for this user before deletion
+            cleanup_ssh_iptables "$uid"
             userdel "$user" > /dev/null 2>&1
             rm -f /home/vps/public_html/ssh-"$user".txt
             echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
@@ -164,7 +229,7 @@ check_bandwidth_limits() {
         fi
         
         # Get current bandwidth usage
-        local current_usage=$(get_user_bandwidth "$username")
+        local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local limit_bytes=$(mb_to_bytes "$limit_mb")
         
         # Check if limit exceeded
@@ -218,7 +283,7 @@ display_bandwidth_usage() {
     while IFS=' ' read -r username limit_mb account_type; do
         [[ -z "$username" || "$username" =~ ^# ]] && continue
         
-        local current_usage=$(get_user_bandwidth "$username")
+        local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local current_mb=$(bytes_to_mb "$current_usage")
         
         local status="OK"

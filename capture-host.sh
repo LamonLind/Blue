@@ -28,7 +28,6 @@ fi
 
 # File to store captured hosts
 HOSTS_FILE="/etc/xray/captured-hosts.txt"
-TEMP_FILE="/tmp/captured-hosts-temp.txt"
 
 # Get the main domain of the VPS
 get_main_domain() {
@@ -39,9 +38,15 @@ get_main_domain() {
     fi
 }
 
-# Get the VPS IP
+# Get the VPS IP using local interface detection first, then fallback to external
 get_vps_ip() {
-    curl -s ipinfo.io/ip 2>/dev/null || curl -s ifconfig.me 2>/dev/null || echo ""
+    # Try to get external IP from local file first (faster)
+    if [ -f /etc/myipvps ]; then
+        cat /etc/myipvps
+        return
+    fi
+    # Fallback to external service with timeout
+    timeout 5 curl -s ipinfo.io/ip 2>/dev/null || timeout 5 curl -s ifconfig.me 2>/dev/null || echo ""
 }
 
 # Initialize hosts file if not exists
@@ -52,9 +57,6 @@ fi
 # Get main domain and IP to exclude
 MAIN_DOMAIN=$(get_main_domain)
 VPS_IP=$(get_vps_ip)
-
-# Create temp file
-touch "$TEMP_FILE"
 
 # Function to add host if not already in list and not main domain/IP
 add_host() {
@@ -93,7 +95,10 @@ capture_ssh_hosts() {
     
     if [ -f "$LOG" ]; then
         # Extract hosts from SSH connections (look for any non-IP connection attempts)
-        grep -i "sshd" "$LOG" 2>/dev/null | grep -oP 'from \K[^\s:]+' | sort -u | while read host; do
+        # Store results in array to avoid subshell issues
+        local hosts
+        hosts=$(grep -i "sshd" "$LOG" 2>/dev/null | grep -oP 'from \K[^\s:]+' | sort -u)
+        for host in $hosts; do
             # Check if it looks like a hostname (contains letters)
             if echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "SSH"
@@ -110,25 +115,21 @@ capture_xray_hosts() {
     # Process main xray log
     if [ -f "$XRAY_LOG" ]; then
         # Extract hosts from xray access log - look for host headers
-        grep -oP 'host[=:]\s*\K[^\s,"\]]+' "$XRAY_LOG" 2>/dev/null | sort -u | while read host; do
+        local hosts
+        hosts=$(grep -oP 'host[=:]\s*\K[^\s,"\]]+' "$XRAY_LOG" 2>/dev/null | sort -u)
+        for host in $hosts; do
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                # Try to determine the service type from the log
-                if grep -q "vmess.*$host" "$XRAY_LOG" 2>/dev/null; then
-                    add_host "$host" "VMESS"
-                elif grep -q "vless.*$host" "$XRAY_LOG" 2>/dev/null; then
-                    add_host "$host" "VLESS"
-                elif grep -q "trojan.*$host" "$XRAY_LOG" 2>/dev/null; then
-                    add_host "$host" "Trojan"
-                else
-                    add_host "$host" "XRAY"
-                fi
+                # Default to XRAY, the service type detection is simplified
+                add_host "$host" "XRAY"
             fi
         done
     fi
     
     # Process second xray log
     if [ -f "$XRAY_LOG2" ]; then
-        grep -oP 'host[=:]\s*\K[^\s,"\]]+' "$XRAY_LOG2" 2>/dev/null | sort -u | while read host; do
+        local hosts2
+        hosts2=$(grep -oP 'host[=:]\s*\K[^\s,"\]]+' "$XRAY_LOG2" 2>/dev/null | sort -u)
+        for host in $hosts2; do
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "XRAY"
             fi
@@ -142,8 +143,10 @@ capture_nginx_hosts() {
     
     if [ -f "$NGINX_LOG" ]; then
         # Extract Host header from nginx logs
-        awk -F'"' '{for(i=1;i<=NF;i++) if($i ~ /Host:/) print $i}' "$NGINX_LOG" 2>/dev/null | \
-        grep -oP 'Host:\s*\K[^\s]+' | sort -u | while read host; do
+        local hosts
+        hosts=$(awk -F'"' '{for(i=1;i<=NF;i++) if($i ~ /Host:/) print $i}' "$NGINX_LOG" 2>/dev/null | \
+                grep -oP 'Host:\s*\K[^\s]+' | sort -u)
+        for host in $hosts; do
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "WebSocket"
             fi
@@ -159,7 +162,9 @@ capture_dropbear_hosts() {
     fi
     
     if [ -f "$LOG" ]; then
-        grep -i "dropbear" "$LOG" 2>/dev/null | grep -oP 'from \K[^\s:]+' | sort -u | while read host; do
+        local hosts
+        hosts=$(grep -i "dropbear" "$LOG" 2>/dev/null | grep -oP 'from \K[^\s:]+' | sort -u)
+        for host in $hosts; do
             if echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "Dropbear"
             fi
@@ -180,8 +185,5 @@ capture_dropbear_hosts
 
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo -e "${OKEY} Host capture complete!"
-
-# Cleanup temp file
-rm -f "$TEMP_FILE"
 
 exit 0

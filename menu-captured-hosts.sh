@@ -206,9 +206,11 @@ remove_host() {
     
     echo -e " ${BIWhite}Current captured hosts:${NC}"
     echo -e ""
-    cat -n "$HOSTS_FILE" | while IFS='|' read -r num host rest; do
-        echo -e " $num. $host"
-    done
+    local count=0
+    while IFS='|' read -r host service timestamp; do
+        ((count++))
+        echo -e " $count. $host ($service)"
+    done < "$HOSTS_FILE"
     echo -e ""
     read -p " Enter the host to remove: " host_to_remove
     

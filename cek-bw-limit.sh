@@ -48,8 +48,8 @@ get_user_bandwidth() {
             # Parse upload and download bytes using awk for efficiency
             local traffic=$(echo "$stats" | awk -v user="$username" '
                 BEGIN { up=0; down=0 }
-                /"name":.*user>>>'user'>>>traffic>>>uplink"/ { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); up=$2 } }
-                /"name":.*user>>>'user'>>>traffic>>>downlink"/ { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); down=$2 } }
+                $0 ~ "\"name\":.*user>>>" user ">>>traffic>>>uplink" { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); up=$2 } }
+                $0 ~ "\"name\":.*user>>>" user ">>>traffic>>>downlink" { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); down=$2 } }
                 END { print up " " down }
             ')
             local up_bytes=$(echo "$traffic" | awk '{print $1}')

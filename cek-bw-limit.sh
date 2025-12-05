@@ -118,6 +118,19 @@ delete_trojan_user() {
     fi
 }
 
+# // Function to delete shadowsocks user
+delete_ssws_user() {
+    local user=$1
+    local exp=$(grep -wE "^#sswg $user" "/etc/xray/config.json" 2>/dev/null | cut -d ' ' -f 3 | sort | uniq | head -1)
+    if [ -n "$exp" ]; then
+        sed -i "/^#ssw $user $exp/,/^},{/d" /etc/xray/config.json
+        sed -i "/^#sswg $user $exp/,/^},{/d" /etc/xray/config.json
+        rm -f /home/vps/public_html/sodosokws-$user.txt
+        rm -f /home/vps/public_html/sodosokgrpc-$user.txt
+        echo -e "[${GREEN} OKEY ${NC}] Shadowsocks user $user deleted (bandwidth limit exceeded)"
+    fi
+}
+
 # // Function to delete SSH user (non-main accounts only)
 delete_ssh_user() {
     local user=$1
@@ -165,6 +178,9 @@ check_bandwidth_limits() {
                     ;;
                 trojan)
                     delete_trojan_user "$username"
+                    ;;
+                ssws)
+                    delete_ssws_user "$username"
                     ;;
                 ssh)
                     delete_ssh_user "$username"

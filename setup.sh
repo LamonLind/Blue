@@ -190,6 +190,7 @@ wget -q -O /usr/bin/cek-speed "https://raw.githubusercontent.com/LamonLind/Blue/
 wget -q -O /usr/bin/cek-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bandwidth.sh"
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
+wget -q -O /usr/bin/cek-bw-limit "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bw-limit.sh"
 wget -q -O /usr/bin/menu-vless "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vless.sh"
 wget -q -O /usr/bin/menu-vmess "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vmess.sh"
 wget -q -O /usr/bin/menu-socks "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-socks.sh"
@@ -231,6 +232,7 @@ chmod +x /usr/bin/cek-speed
 chmod +x /usr/bin/cek-bandwidth
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
+chmod +x /usr/bin/cek-bw-limit
 chmod +x /usr/bin/menu-vless
 chmod +x /usr/bin/menu-vmess
 chmod +x /usr/bin/menu-ss
@@ -297,6 +299,26 @@ SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 */30 * * * * root /usr/bin/capture-host >/dev/null 2>&1
 END
+
+# Create systemd service for bandwidth limit checking every 10 seconds
+cat > /etc/systemd/system/bw-limit-check.service <<-END
+[Unit]
+Description=Bandwidth Limit Checker Service
+After=network.target xray.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 10; done'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+END
+
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable bw-limit-check >/dev/null 2>&1
+systemctl start bw-limit-check >/dev/null 2>&1
 
 cat > /home/re_otm <<-END
 7

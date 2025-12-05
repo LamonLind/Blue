@@ -36,8 +36,8 @@ touch "$BW_USAGE_FILE" 2>/dev/null
 _APISERVER=127.0.0.1:10085
 _Xray=/usr/local/bin/xray
 
-# // Function to get user bandwidth usage from xray API
-get_user_bandwidth() {
+# // Function to get user bandwidth usage from xray API (for xray protocols)
+get_xray_user_bandwidth() {
     local username=$1
     local total_bytes=0
     
@@ -59,6 +59,52 @@ get_user_bandwidth() {
             down_bytes=${down_bytes:-0}
             total_bytes=$((up_bytes + down_bytes))
         fi
+    fi
+    
+    echo $total_bytes
+}
+
+# // Function to get SSH user bandwidth usage via iptables accounting
+get_ssh_user_bandwidth() {
+    local username=$1
+    local total_bytes=0
+    
+    # Get user UID
+    local uid=$(id -u "$username" 2>/dev/null)
+    if [ -z "$uid" ]; then
+        echo 0
+        return
+    fi
+    
+    # Check if iptables rule exists for this user, if not create it
+    if ! iptables -L OUTPUT -v -n 2>/dev/null | grep -q "owner UID match $uid"; then
+        # Create iptables rule to track outgoing traffic for this user
+        iptables -A OUTPUT -m owner --uid-owner "$uid" -j ACCEPT 2>/dev/null
+    fi
+    
+    if ! iptables -L INPUT -v -n 2>/dev/null | grep -q "owner UID match $uid"; then
+        # Note: INPUT chain doesn't support owner matching, so we track via FORWARD or use different method
+        :
+    fi
+    
+    # Get bytes from iptables OUTPUT chain for this user
+    local out_bytes=$(iptables -L OUTPUT -v -n -x 2>/dev/null | grep "owner UID match $uid" | awk '{sum+=$2} END {print sum}')
+    out_bytes=${out_bytes:-0}
+    
+    total_bytes=$out_bytes
+    echo $total_bytes
+}
+
+# // Function to get user bandwidth usage based on account type
+get_user_bandwidth() {
+    local username=$1
+    local account_type=$2
+    local total_bytes=0
+    
+    if [ "$account_type" = "ssh" ]; then
+        total_bytes=$(get_ssh_user_bandwidth "$username")
+    else
+        total_bytes=$(get_xray_user_bandwidth "$username")
     fi
     
     # Add stored usage from file (for persistent tracking)
@@ -164,7 +210,7 @@ check_bandwidth_limits() {
         fi
         
         # Get current bandwidth usage
-        local current_usage=$(get_user_bandwidth "$username")
+        local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local limit_bytes=$(mb_to_bytes "$limit_mb")
         
         # Check if limit exceeded
@@ -218,7 +264,7 @@ display_bandwidth_usage() {
     while IFS=' ' read -r username limit_mb account_type; do
         [[ -z "$username" || "$username" =~ ^# ]] && continue
         
-        local current_usage=$(get_user_bandwidth "$username")
+        local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local current_mb=$(bytes_to_mb "$current_usage")
         
         local status="OK"

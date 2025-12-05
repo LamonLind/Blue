@@ -58,19 +58,37 @@ fi
 MAIN_DOMAIN=$(get_main_domain)
 VPS_IP=$(get_vps_ip)
 
+# Function to normalize hostname (lowercase, remove trailing dots, ports)
+normalize_host() {
+    local host="$1"
+    # Convert to lowercase, remove port if present, then remove trailing dots
+    echo "$host" | tr '[:upper:]' '[:lower:]' | sed 's/:.*$//; s/\.$//'
+}
+
 # Function to add host if not already in list and not main domain/IP
 add_host() {
     local host="$1"
     local service="$2"
-    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    local timestamp
+    timestamp=$(date "+%Y-%m-%d %H:%M:%S")
     
     # Skip if empty
     if [ -z "$host" ]; then
         return
     fi
     
-    # Skip if it's the main domain or VPS IP
-    if [ "$host" = "$MAIN_DOMAIN" ] || [ "$host" = "$VPS_IP" ]; then
+    # Normalize the host (lowercase, remove port, remove trailing dot)
+    host=$(normalize_host "$host")
+    
+    # Skip if empty after normalization
+    if [ -z "$host" ]; then
+        return
+    fi
+    
+    # Skip if it's the main domain or VPS IP (case-insensitive)
+    local main_domain_lower
+    main_domain_lower=$(echo "$MAIN_DOMAIN" | tr '[:upper:]' '[:lower:]')
+    if [ "$host" = "$main_domain_lower" ] || [ "$host" = "$VPS_IP" ]; then
         return
     fi
     
@@ -79,8 +97,8 @@ add_host() {
         return
     fi
     
-    # Check if host already exists in the file
-    if ! grep -q "^$host|" "$HOSTS_FILE" 2>/dev/null; then
+    # Check if host already exists in the file (case-insensitive check)
+    if ! grep -qi "^${host}|" "$HOSTS_FILE" 2>/dev/null; then
         echo "$host|$service|$timestamp" >> "$HOSTS_FILE"
         echo -e "${OKEY} Captured new host: $host ($service)"
     fi
@@ -108,18 +126,45 @@ capture_ssh_hosts() {
 }
 
 # Capture hosts from Xray access log (VLESS, VMESS, Trojan)
+# Captures: HTTP Host header, SNI (Server Name Indication), Proxy Host
 capture_xray_hosts() {
     local XRAY_LOG="/var/log/xray/access.log"
     local XRAY_LOG2="/var/log/xray/access2.log"
     
     # Process main xray log
     if [ -f "$XRAY_LOG" ]; then
-        # Extract hosts from xray access log - look for host headers
-        local hosts
-        hosts=$(grep -oP 'host[=:]\s*\K[^\s,"\]]+' "$XRAY_LOG" 2>/dev/null | sort -u)
-        for host in $hosts; do
+        # Extract HTTP Host headers (various formats: host=, Host:, host:)
+        local header_hosts
+        header_hosts=$(grep -oiP '(host[=:]\s*|Host:\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$XRAY_LOG" 2>/dev/null | sort -u)
+        for host in $header_hosts; do
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                # Default to XRAY, the service type detection is simplified
+                add_host "$host" "Header-Host"
+            fi
+        done
+        
+        # Extract SNI (Server Name Indication) - common log formats: sni=, serverName=, SNI:
+        local sni_hosts
+        sni_hosts=$(grep -oiP '(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$XRAY_LOG" 2>/dev/null | sort -u)
+        for host in $sni_hosts; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "SNI"
+            fi
+        done
+        
+        # Extract Proxy Host - common log formats: proxy_host=, proxyHost=, X-Forwarded-Host:
+        local proxy_hosts
+        proxy_hosts=$(grep -oiP '(proxy[_-]?host[=:]\s*|X-Forwarded-Host:\s*|x-forwarded-host:\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$XRAY_LOG" 2>/dev/null | sort -u)
+        for host in $proxy_hosts; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "Proxy-Host"
+            fi
+        done
+        
+        # Extract destination domains from xray log (format: -> domain:port or accepted domain:port)
+        local dest_hosts
+        dest_hosts=$(grep -oP '(->|accepted)\s*\K[a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,}' "$XRAY_LOG" 2>/dev/null | sort -u)
+        for host in $dest_hosts; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "XRAY"
             fi
         done
@@ -127,9 +172,37 @@ capture_xray_hosts() {
     
     # Process second xray log
     if [ -f "$XRAY_LOG2" ]; then
-        local hosts2
-        hosts2=$(grep -oP 'host[=:]\s*\K[^\s,"\]]+' "$XRAY_LOG2" 2>/dev/null | sort -u)
-        for host in $hosts2; do
+        # Extract HTTP Host headers
+        local header_hosts2
+        header_hosts2=$(grep -oiP '(host[=:]\s*|Host:\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$XRAY_LOG2" 2>/dev/null | sort -u)
+        for host in $header_hosts2; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "Header-Host"
+            fi
+        done
+        
+        # Extract SNI
+        local sni_hosts2
+        sni_hosts2=$(grep -oiP '(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$XRAY_LOG2" 2>/dev/null | sort -u)
+        for host in $sni_hosts2; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "SNI"
+            fi
+        done
+        
+        # Extract Proxy Host
+        local proxy_hosts2
+        proxy_hosts2=$(grep -oiP '(proxy[_-]?host[=:]\s*|X-Forwarded-Host:\s*|x-forwarded-host:\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$XRAY_LOG2" 2>/dev/null | sort -u)
+        for host in $proxy_hosts2; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "Proxy-Host"
+            fi
+        done
+        
+        # Extract destination domains
+        local dest_hosts2
+        dest_hosts2=$(grep -oP '(->|accepted)\s*\K[a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,}' "$XRAY_LOG2" 2>/dev/null | sort -u)
+        for host in $dest_hosts2; do
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "XRAY"
             fi
@@ -138,8 +211,10 @@ capture_xray_hosts() {
 }
 
 # Capture hosts from nginx access log
+# Captures: Host header, X-Forwarded-Host, SNI from SSL logs
 capture_nginx_hosts() {
     local NGINX_LOG="/var/log/nginx/access.log"
+    local NGINX_ERROR_LOG="/var/log/nginx/error.log"
     
     if [ -f "$NGINX_LOG" ]; then
         # Extract Host header from nginx logs
@@ -148,7 +223,27 @@ capture_nginx_hosts() {
                 grep -oP 'Host:\s*\K[^\s]+' | sort -u)
         for host in $hosts; do
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "WebSocket"
+                add_host "$host" "Header-Host"
+            fi
+        done
+        
+        # Extract X-Forwarded-Host from nginx logs (proxy host)
+        local proxy_hosts
+        proxy_hosts=$(grep -oiP 'X-Forwarded-Host:\s*\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$NGINX_LOG" 2>/dev/null | sort -u)
+        for host in $proxy_hosts; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "Proxy-Host"
+            fi
+        done
+    fi
+    
+    # Extract SNI from nginx error log (SSL handshake info)
+    if [ -f "$NGINX_ERROR_LOG" ]; then
+        local sni_hosts
+        sni_hosts=$(grep -oiP '(SSL_do_handshake.*|server name[=:]\s*|SNI[=:]\s*)\K[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z0-9]' "$NGINX_ERROR_LOG" 2>/dev/null | sort -u)
+        for host in $sni_hosts; do
+            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
+                add_host "$host" "SNI"
             fi
         done
     fi

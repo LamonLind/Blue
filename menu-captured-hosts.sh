@@ -161,6 +161,13 @@ clear_hosts() {
     echo -e ""
 }
 
+# Function to normalize hostname (lowercase, remove trailing dots, ports)
+normalize_host() {
+    local host="$1"
+    # Convert to lowercase, remove port if present, then remove trailing dots
+    echo "$host" | tr '[:upper:]' '[:lower:]' | sed 's/:.*$//; s/\.$//'
+}
+
 # Function to add host manually
 add_host_manual() {
     clear
@@ -169,22 +176,31 @@ add_host_manual() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
     echo -e ""
     read -p " Enter host/domain: " new_host
-    read -p " Enter service type (SSH/VMESS/VLESS/Trojan): " service
+    read -p " Enter service type (SSH/VMESS/VLESS/Trojan/SNI/Header-Host/Proxy-Host): " service
     
     if [ -z "$new_host" ]; then
         echo -e ""
         echo -e " ${EROR} Host cannot be empty."
     else
-        timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        # Normalize the host (lowercase, remove port, remove trailing dot)
+        new_host=$(normalize_host "$new_host")
         
-        # Check if host already exists
-        if grep -q "^$new_host|" "$HOSTS_FILE" 2>/dev/null; then
+        if [ -z "$new_host" ]; then
             echo -e ""
-            echo -e " ${INFO} Host already exists in the list."
+            echo -e " ${EROR} Invalid host format."
         else
-            echo "$new_host|${service:-Manual}|$timestamp" >> "$HOSTS_FILE"
-            echo -e ""
-            echo -e " ${OKEY} Host '$new_host' has been added."
+            local timestamp
+            timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+            
+            # Check if host already exists (case-insensitive)
+            if grep -qi "^${new_host}|" "$HOSTS_FILE" 2>/dev/null; then
+                echo -e ""
+                echo -e " ${INFO} Host already exists in the list."
+            else
+                echo "$new_host|${service:-Manual}|$timestamp" >> "$HOSTS_FILE"
+                echo -e ""
+                echo -e " ${OKEY} Host '$new_host' has been added."
+            fi
         fi
     fi
     echo -e ""

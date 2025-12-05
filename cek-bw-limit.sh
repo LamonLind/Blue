@@ -1,9 +1,13 @@
 #!/bin/bash
 # =========================================
-# Bandwidth Usage Limit Checker
-# Checks user bandwidth usage and deletes
-# accounts that exceed their limit
-# Edition : Stable Edition V1.0
+# Professional Data Usage Limit Manager
+# Universal bandwidth/data limit system for:
+# - SSH users
+# - VLESS users (UUID based)
+# - VMESS users (UUID based)
+# - Trojan users
+# - Shadowsocks users
+# Edition : Stable Edition V2.0
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================
@@ -13,10 +17,24 @@ export RED='\033[0;31m'
 export GREEN='\033[0;32m'
 export YELLOW='\033[0;33m'
 export BLUE='\033[0;34m'
+export PURPLE='\033[0;35m'
+export CYAN='\033[0;36m'
 export NC='\033[0m'
+
+# // Color Variables for Menu
+BIBlack='\033[1;90m'
+BIRed='\033[1;91m'
+BIGreen='\033[1;92m'
+BIYellow='\033[1;93m'
+BIBlue='\033[1;94m'
+BIPurple='\033[1;95m'
+BICyan='\033[1;96m'
+BIWhite='\033[1;97m'
+UWhite='\033[4;37m'
 
 # // Configuration
 WARNING_THRESHOLD=80  # Percentage at which to show warning (0-100)
+# Note: Check interval is configured in systemd service (/etc/systemd/system/bw-limit-check.service)
 
 # // Root Checking
 if [ "${EUID}" -ne 0 ]; then
@@ -24,13 +42,15 @@ if [ "${EUID}" -ne 0 ]; then
     exit 1
 fi
 
-# // Bandwidth limit file location
+# // Bandwidth limit file location (persistent storage)
 BW_LIMIT_FILE="/etc/xray/bw-limit.conf"
 BW_USAGE_FILE="/etc/xray/bw-usage.conf"
+BW_DISABLED_FILE="/etc/xray/bw-disabled.conf"
 
 # // Create files if they don't exist
 touch "$BW_LIMIT_FILE" 2>/dev/null
 touch "$BW_USAGE_FILE" 2>/dev/null
+touch "$BW_DISABLED_FILE" 2>/dev/null
 
 # // Xray API configuration
 _APISERVER=127.0.0.1:10085
@@ -386,6 +406,422 @@ add_bandwidth_limit() {
     echo -e "[${GREEN} OKEY ${NC}] Bandwidth limit set: $username = $limit_mb MB ($account_type)"
 }
 
+# // Function to save current usage to persistent storage
+save_usage_to_file() {
+    local username=$1
+    local account_type=$2
+    local current_usage=0
+    
+    if [ "$account_type" = "ssh" ]; then
+        current_usage=$(get_ssh_user_bandwidth "$username")
+    else
+        current_usage=$(get_xray_user_bandwidth "$username")
+    fi
+    
+    # Read stored usage BEFORE deleting the entry
+    local stored_usage=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
+    stored_usage=${stored_usage:-0}
+    
+    # Update usage file
+    sed -i "/^$username /d" "$BW_USAGE_FILE"
+    local total=$((stored_usage + current_usage))
+    echo "$username $total" >> "$BW_USAGE_FILE"
+}
+
+# // Function to reset user usage (renew)
+reset_user_usage() {
+    local username=$1
+    
+    if [ -z "$username" ]; then
+        echo -e "[${RED} EROR ${NC}] Username required!"
+        return 1
+    fi
+    
+    # Check if user has a limit set
+    if ! grep -q "^$username " "$BW_LIMIT_FILE" 2>/dev/null; then
+        echo -e "[${YELLOW} WARN ${NC}] User $username not found in bandwidth limit list"
+        return 1
+    fi
+    
+    # Get account type
+    local account_type=$(grep "^$username " "$BW_LIMIT_FILE" | awk '{print $3}')
+    
+    # Remove from usage file
+    sed -i "/^$username /d" "$BW_USAGE_FILE"
+    
+    # Reset iptables counters for SSH users
+    if [ "$account_type" = "ssh" ]; then
+        local uid=$(id -u "$username" 2>/dev/null)
+        if [ -n "$uid" ]; then
+            local chain_name="BW_${uid}"
+            iptables -Z "$chain_name" 2>/dev/null
+        fi
+    fi
+    
+    echo -e "[${GREEN} OKEY ${NC}] Usage reset for user: $username"
+}
+
+# // Function to reset all users usage
+reset_all_usage() {
+    echo -e "[${YELLOW} INFO ${NC}] Resetting usage for all users..."
+    
+    while IFS=' ' read -r username limit_mb account_type; do
+        [[ -z "$username" || "$username" =~ ^# ]] && continue
+        reset_user_usage "$username"
+    done < "$BW_LIMIT_FILE"
+    
+    # Clear usage file
+    > "$BW_USAGE_FILE"
+    
+    echo -e "[${GREEN} OKEY ${NC}] All user usage has been reset"
+}
+
+# // Function to disable a user manually
+disable_user() {
+    local username=$1
+    
+    if [ -z "$username" ]; then
+        echo -e "[${RED} EROR ${NC}] Username required!"
+        return 1
+    fi
+    
+    # Get account type from limit file
+    local account_type=$(grep "^$username " "$BW_LIMIT_FILE" 2>/dev/null | awk '{print $3}')
+    
+    if [ -z "$account_type" ]; then
+        # Try to detect account type
+        if getent passwd "$username" >/dev/null 2>&1; then
+            account_type="ssh"
+        elif grep -qE "^#(vms|vmsg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="vmess"
+        elif grep -qE "^#(vls|vlsg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="vless"
+        elif grep -qE "^#(tr|trg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="trojan"
+        elif grep -qE "^#(ssw|sswg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="ssws"
+        else
+            echo -e "[${RED} EROR ${NC}] Cannot detect account type for $username"
+            return 1
+        fi
+    fi
+    
+    case "$account_type" in
+        ssh)
+            passwd -l "$username" >/dev/null 2>&1
+            echo -e "[${GREEN} OKEY ${NC}] SSH user $username has been locked"
+            ;;
+        vmess|vless|trojan|ssws)
+            # Add to disabled list
+            if ! grep -q "^$username " "$BW_DISABLED_FILE"; then
+                echo "$username $account_type $(date +%Y-%m-%d)" >> "$BW_DISABLED_FILE"
+            fi
+            echo -e "[${GREEN} OKEY ${NC}] Xray user $username has been disabled"
+            ;;
+    esac
+    return 0
+}
+
+# // Function to enable a user
+enable_user() {
+    local username=$1
+    
+    if [ -z "$username" ]; then
+        echo -e "[${RED} EROR ${NC}] Username required!"
+        return 1
+    fi
+    
+    # Get account type
+    local account_type=$(grep "^$username " "$BW_LIMIT_FILE" 2>/dev/null | awk '{print $3}')
+    
+    if [ -z "$account_type" ]; then
+        account_type=$(grep "^$username " "$BW_DISABLED_FILE" 2>/dev/null | awk '{print $2}')
+    fi
+    
+    if [ -z "$account_type" ]; then
+        if getent passwd "$username" >/dev/null 2>&1; then
+            account_type="ssh"
+        fi
+    fi
+    
+    case "$account_type" in
+        ssh)
+            passwd -u "$username" >/dev/null 2>&1
+            echo -e "[${GREEN} OKEY ${NC}] SSH user $username has been unlocked"
+            ;;
+        vmess|vless|trojan|ssws)
+            # Remove from disabled list
+            sed -i "/^$username /d" "$BW_DISABLED_FILE"
+            echo -e "[${GREEN} OKEY ${NC}] Xray user $username has been enabled"
+            ;;
+        *)
+            echo -e "[${YELLOW} WARN ${NC}] Cannot determine account type for $username"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# // Function to set/update user limit
+set_user_limit() {
+    local username=$1
+    local limit_mb=$2
+    
+    if [ -z "$username" ] || [ -z "$limit_mb" ]; then
+        echo -e "[${RED} EROR ${NC}] Username and limit required!"
+        return 1
+    fi
+    
+    # Get existing account type or detect it
+    local account_type=$(grep "^$username " "$BW_LIMIT_FILE" 2>/dev/null | awk '{print $3}')
+    
+    if [ -z "$account_type" ]; then
+        # Try to detect account type
+        if getent passwd "$username" >/dev/null 2>&1; then
+            account_type="ssh"
+        elif grep -qE "^#(vms|vmsg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="vmess"
+        elif grep -qE "^#(vls|vlsg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="vless"
+        elif grep -qE "^#(tr|trg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="trojan"
+        elif grep -qE "^#(ssw|sswg) $username " /etc/xray/config.json 2>/dev/null; then
+            account_type="ssws"
+        else
+            echo -e "[${RED} EROR ${NC}] Cannot detect account type for $username"
+            return 1
+        fi
+    fi
+    
+    add_bandwidth_limit "$username" "$limit_mb" "$account_type"
+}
+
+# // Function to remove user limit
+remove_user_limit() {
+    local username=$1
+    
+    if [ -z "$username" ]; then
+        echo -e "[${RED} EROR ${NC}] Username required!"
+        return 1
+    fi
+    
+    sed -i "/^$username /d" "$BW_LIMIT_FILE"
+    sed -i "/^$username /d" "$BW_USAGE_FILE"
+    echo -e "[${GREEN} OKEY ${NC}] Limit removed for user: $username"
+}
+
+# // Function to check single user usage
+check_user_usage() {
+    local username=$1
+    
+    if [ -z "$username" ]; then
+        echo -e "[${RED} EROR ${NC}] Username required!"
+        return 1
+    fi
+    
+    local entry=$(grep "^$username " "$BW_LIMIT_FILE" 2>/dev/null)
+    
+    if [ -z "$entry" ]; then
+        echo -e "[${YELLOW} WARN ${NC}] User $username not found in bandwidth limit list"
+        return 1
+    fi
+    
+    local limit_mb=$(echo "$entry" | awk '{print $2}')
+    local account_type=$(echo "$entry" | awk '{print $3}')
+    
+    local current_usage=$(get_user_bandwidth "$username" "$account_type")
+    local current_mb=$(bytes_to_mb "$current_usage")
+    local limit_bytes=$(mb_to_bytes "$limit_mb")
+    
+    local status="OK"
+    local color="${GREEN}"
+    local percentage=0
+    
+    if [ "$limit_mb" -eq 0 ] 2>/dev/null; then
+        status="UNLIMITED"
+    else
+        percentage=$((current_usage * 100 / limit_bytes))
+        if [ "$current_usage" -ge "$limit_bytes" ]; then
+            status="EXCEEDED"
+            color="${RED}"
+        elif [ "$percentage" -ge "$WARNING_THRESHOLD" ]; then
+            status="WARNING"
+            color="${YELLOW}"
+        fi
+    fi
+    
+    clear
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\\E[0;41;36m       USER USAGE DETAILS         \E[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e ""
+    echo -e " Username     : ${BIWhite}$username${NC}"
+    echo -e " Account Type : ${BIWhite}$account_type${NC}"
+    echo -e " Used         : ${BIWhite}$current_mb MB${NC}"
+    echo -e " Limit        : ${BIWhite}$limit_mb MB${NC}"
+    echo -e " Percentage   : ${color}$percentage%${NC}"
+    echo -e " Status       : ${color}$status${NC}"
+    echo -e ""
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+}
+
+# // Function to list all users with limits
+list_all_users() {
+    clear
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\\E[0;41;36m                         ALL USERS WITH DATA LIMITS                        \E[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    printf "%-4s %-15s %-10s %-12s %-10s %-8s %-10s\n" "NO" "USERNAME" "USED(MB)" "LIMIT(MB)" "TYPE" "PERCENT" "STATUS"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    
+    local count=0
+    while IFS=' ' read -r username limit_mb account_type; do
+        [[ -z "$username" || "$username" =~ ^# ]] && continue
+        
+        ((count++))
+        
+        local current_usage=$(get_user_bandwidth "$username" "$account_type")
+        local current_mb=$(bytes_to_mb "$current_usage")
+        
+        local status="OK"
+        local color="${GREEN}"
+        local percentage=0
+        
+        if [ "$limit_mb" -eq 0 ] 2>/dev/null; then
+            status="UNLIM"
+            percentage=0
+        else
+            local limit_bytes=$(mb_to_bytes "$limit_mb")
+            if [ "$limit_bytes" -gt 0 ]; then
+                percentage=$((current_usage * 100 / limit_bytes))
+            fi
+            if [ "$current_usage" -ge "$limit_bytes" ]; then
+                status="EXCEED"
+                color="${RED}"
+            elif [ "$percentage" -ge "$WARNING_THRESHOLD" ]; then
+                status="WARN"
+                color="${YELLOW}"
+            fi
+        fi
+        
+        printf "%-4s %-15s %-10s %-12s %-10s %-8s ${color}%-10s${NC}\n" "$count" "$username" "$current_mb" "$limit_mb" "$account_type" "${percentage}%" "$status"
+    done < "$BW_LIMIT_FILE"
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "  ${YELLOW}No users with data limits found${NC}"
+    fi
+    
+    echo ""
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "  Total Users: ${BIWhite}$count${NC}"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+}
+
+# // Interactive menu for data limit management
+data_limit_menu() {
+    clear
+    echo -e "${BICyan} ┌─────────────────────────────────────────────────────┐${NC}"
+    echo -e "       ${BIWhite}${UWhite}DATA USAGE LIMIT MENU${NC}"
+    echo -e ""
+    echo -e "     ${BICyan}[${BIWhite}1${BICyan}] Show All Users + Usage + Limits"
+    echo -e "     ${BICyan}[${BIWhite}2${BICyan}] Check Single User Usage"
+    echo -e "     ${BICyan}[${BIWhite}3${BICyan}] Set User Data Limit"
+    echo -e "     ${BICyan}[${BIWhite}4${BICyan}] Remove User Limit"
+    echo -e "     ${BICyan}[${BIWhite}5${BICyan}] Reset User Usage (Renew)"
+    echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Reset All Users Usage"
+    echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Disable User"
+    echo -e "     ${BICyan}[${BIWhite}8${BICyan}] Enable User"
+    echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
+    echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
+    echo ""
+    read -p " Select menu : " opt
+    echo -e ""
+    
+    case $opt in
+        1)
+            list_all_users
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        2)
+            echo ""
+            read -p "Enter username: " uname
+            check_user_usage "$uname"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        3)
+            echo ""
+            read -p "Enter username: " uname
+            read -p "Enter limit in MB (0 for unlimited): " limit
+            set_user_limit "$uname" "$limit"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        4)
+            echo ""
+            read -p "Enter username: " uname
+            remove_user_limit "$uname"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        5)
+            echo ""
+            read -p "Enter username to reset: " uname
+            reset_user_usage "$uname"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        6)
+            echo ""
+            read -p "Are you sure you want to reset ALL users? (y/n): " confirm
+            if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+                reset_all_usage
+            else
+                echo -e "[${YELLOW} INFO ${NC}] Operation cancelled"
+            fi
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        7)
+            echo ""
+            read -p "Enter username to disable: " uname
+            disable_user "$uname"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        8)
+            echo ""
+            read -p "Enter username to enable: " uname
+            enable_user "$uname"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        x|X)
+            # Exit to main menu (menu command is available when script is installed)
+            if command -v menu &>/dev/null; then
+                menu
+            else
+                exit 0
+            fi
+            ;;
+        *)
+            echo -e "${RED}Invalid option${NC}"
+            sleep 1
+            data_limit_menu
+            ;;
+    esac
+}
+
 # // Run mode
 case "$1" in
     check)
@@ -401,6 +837,57 @@ case "$1" in
         else
             echo "Usage: $0 add <username> <limit_mb> <account_type>"
         fi
+        ;;
+    reset)
+        if [ -n "$2" ]; then
+            reset_user_usage "$2"
+        else
+            echo "Usage: $0 reset <username>"
+        fi
+        ;;
+    reset-all)
+        reset_all_usage
+        ;;
+    set)
+        if [ -n "$2" ] && [ -n "$3" ]; then
+            set_user_limit "$2" "$3"
+        else
+            echo "Usage: $0 set <username> <limit_mb>"
+        fi
+        ;;
+    remove)
+        if [ -n "$2" ]; then
+            remove_user_limit "$2"
+        else
+            echo "Usage: $0 remove <username>"
+        fi
+        ;;
+    disable)
+        if [ -n "$2" ]; then
+            disable_user "$2"
+        else
+            echo "Usage: $0 disable <username>"
+        fi
+        ;;
+    enable)
+        if [ -n "$2" ]; then
+            enable_user "$2"
+        else
+            echo "Usage: $0 enable <username>"
+        fi
+        ;;
+    usage)
+        if [ -n "$2" ]; then
+            check_user_usage "$2"
+        else
+            echo "Usage: $0 usage <username>"
+        fi
+        ;;
+    list)
+        list_all_users
+        ;;
+    menu)
+        data_limit_menu
         ;;
     *)
         # Default: run check

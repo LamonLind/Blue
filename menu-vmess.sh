@@ -191,13 +191,18 @@ NUMBER_OF_CLIENTS=$(grep -c -E "^#vmsg " "/etc/xray/config.json")
 	done
 user=$(grep -E "^#vmsg " "/etc/xray/config.json" | cut -d ' ' -f 2 | sed -n "${CLIENT_NUMBER}"p)
 exp=$(grep -E "^#vmsg " "/etc/xray/config.json" | cut -d ' ' -f 3 | sed -n "${CLIENT_NUMBER}"p)
+# Delete all vmess-related entries for this user
 sed -i "/^#vmsg $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vms $user $exp/,/^},{/d" /etc/xray/config.json
+sed -i "/^#vmsx $user $exp/,/^},{/d" /etc/xray/config.json
+# Also delete ### entries (used for vmess quota/worryfree)
+sed -i "/^### $user $exp/,/^},{/d" /etc/xray/config.json
 rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
 rm -f /home/vps/public_html/vmess-$user.txt
-# Remove bandwidth limit entry
+# Remove bandwidth limit and tracking entries
 sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
 sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 systemctl restart xray.service
 clear
 echo ""

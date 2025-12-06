@@ -67,9 +67,13 @@ get_xray_user_bandwidth() {
     if [ -f "$_Xray" ]; then
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
+            # Flatten multi-line JSON to single line for more reliable parsing
+            # This matches the approach used in repository memories
+            local flat_stats=$(echo "$stats" | tr -d '\n\t')
+            
             # Parse upload and download bytes using awk
             # This approach handles both multi-line and single-line/compact JSON formats
-            local traffic=$(echo "$stats" | awk -v user="$username" '
+            local traffic=$(echo "$flat_stats" | awk -v user="$username" '
                 BEGIN { up=0; down=0; current_name="" }
                 {
                     line = $0
@@ -813,6 +817,91 @@ list_all_users() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
+# // Function to check bandwidth monitoring service status
+check_service_status() {
+    clear
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\\E[0;41;36m   BANDWIDTH MONITORING STATUS     \E[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    
+    # Check if service exists
+    if systemctl list-unit-files | grep -q "bw-limit-check.service"; then
+        echo -e " Service File: ${GREEN}EXISTS${NC}"
+        
+        # Check if service is active
+        if systemctl is-active --quiet bw-limit-check.service; then
+            echo -e " Service Status: ${GREEN}RUNNING${NC}"
+        else
+            echo -e " Service Status: ${RED}NOT RUNNING${NC}"
+            echo ""
+            echo -e " ${YELLOW}To start the service, run:${NC}"
+            echo -e "   systemctl start bw-limit-check"
+        fi
+        
+        # Check if service is enabled
+        if systemctl is-enabled --quiet bw-limit-check.service; then
+            echo -e " Auto-start: ${GREEN}ENABLED${NC}"
+        else
+            echo -e " Auto-start: ${YELLOW}DISABLED${NC}"
+            echo ""
+            echo -e " ${YELLOW}To enable auto-start, run:${NC}"
+            echo -e "   systemctl enable bw-limit-check"
+        fi
+    else
+        echo -e " Service File: ${RED}NOT FOUND${NC}"
+        echo ""
+        echo -e " ${YELLOW}The bandwidth monitoring service is not installed.${NC}"
+        echo -e " This should be created during initial setup."
+        echo -e ""
+        echo -e " To create the service, run setup.sh or manually create:"
+        echo -e "   /etc/systemd/system/bw-limit-check.service"
+    fi
+    
+    echo ""
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    
+    # Check if xray is running
+    if pgrep -x "xray" > /dev/null; then
+        echo -e " Xray Service: ${GREEN}RUNNING${NC}"
+    else
+        echo -e " Xray Service: ${RED}NOT RUNNING${NC}"
+    fi
+    
+    # Check if xray API is accessible
+    if [ -f "$_Xray" ]; then
+        local test_stats=$($_Xray api statsquery --server=$_APISERVER 2>&1)
+        if [ -n "$test_stats" ] && ! echo "$test_stats" | grep -q "error\|failed\|refused"; then
+            echo -e " Xray API: ${GREEN}ACCESSIBLE${NC}"
+        else
+            echo -e " Xray API: ${RED}NOT ACCESSIBLE${NC}"
+            echo -e "   Error: $(echo "$test_stats" | head -1)"
+        fi
+    else
+        echo -e " Xray Binary: ${RED}NOT FOUND${NC}"
+    fi
+    
+    echo ""
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    
+    # Show config files status
+    echo -e " Configuration Files:"
+    for file in "$BW_LIMIT_FILE" "$BW_USAGE_FILE" "$BW_LAST_STATS_FILE" "$BW_DISABLED_FILE"; do
+        local basename=$(basename "$file")
+        if [ -f "$file" ]; then
+            local count=$(grep -c "^[^#]" "$file" 2>/dev/null || echo 0)
+            echo -e "   $basename: ${GREEN}EXISTS${NC} ($count entries)"
+        else
+            echo -e "   $basename: ${YELLOW}MISSING${NC}"
+        fi
+    done
+    
+    echo ""
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+}
+
 # // Interactive menu for data limit management
 data_limit_menu() {
     clear
@@ -827,6 +916,7 @@ data_limit_menu() {
     echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Reset All Users Usage"
     echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Disable User"
     echo -e "     ${BICyan}[${BIWhite}8${BICyan}] Enable User"
+    echo -e "     ${BICyan}[${BIWhite}9${BICyan}] Check Bandwidth Service Status"
     echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
     echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
     echo ""
@@ -897,6 +987,13 @@ data_limit_menu() {
             echo ""
             read -p "Enter username to enable: " uname
             enable_user "$uname"
+            echo ""
+            read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        9)
+            echo ""
+            check_service_status
             echo ""
             read -n 1 -s -r -p "Press any key to continue"
             data_limit_menu

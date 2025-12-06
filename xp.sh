@@ -171,10 +171,21 @@ if [ $userexpireinseconds -ge $todaystime ] ;
 then
 :
 else
+# Get UID before deleting user for iptables cleanup (strip trailing spaces)
+local clean_username="${username%% *}"
+local uid=$(id -u "$clean_username" 2>/dev/null)
+# Cleanup iptables rules for this user
+if [ -n "$uid" ]; then
+    local chain_name="BW_${uid}"
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    iptables -F "$chain_name" 2>/dev/null
+    iptables -X "$chain_name" 2>/dev/null
+fi
 userdel --force $username
-# Remove bandwidth limit entry for SSH user
-sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null
-sed -i "/^${username%% *} /d" /etc/xray/bw-usage.conf 2>/dev/null
+# Remove bandwidth limit entry for SSH user (all three files)
+sed -i "/^${clean_username} /d" /etc/xray/bw-limit.conf 2>/dev/null
+sed -i "/^${clean_username} /d" /etc/xray/bw-usage.conf 2>/dev/null
+sed -i "/^${clean_username} /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 fi
 done
 echo -e "[ ${green}INFO${NC} ] Back to menu in 5 sec . . . "

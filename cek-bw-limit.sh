@@ -68,7 +68,8 @@ get_xray_user_bandwidth() {
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
             # Flatten multi-line JSON to single line for more reliable parsing
-            # This matches the approach used in repository memories
+            # Xray API can return JSON in multi-line or compact format
+            # Flattening ensures consistent parsing regardless of format
             local flat_stats=$(echo "$stats" | tr -d '\n\t')
             
             # Parse upload and download bytes using awk
@@ -871,12 +872,20 @@ check_service_status() {
     
     # Check if xray API is accessible
     if [ -f "$_Xray" ]; then
+        # Test API connection and check exit code
         local test_stats=$($_Xray api statsquery --server=$_APISERVER 2>&1)
-        if [ -n "$test_stats" ] && ! echo "$test_stats" | grep -q "error\|failed\|refused"; then
-            echo -e " Xray API: ${GREEN}ACCESSIBLE${NC}"
+        local api_exit_code=$?
+        if [ $api_exit_code -eq 0 ] && [ -n "$test_stats" ]; then
+            # Additional check for common error messages in output
+            if ! echo "$test_stats" | grep -qi "error\|failed\|refused\|denied"; then
+                echo -e " Xray API: ${GREEN}ACCESSIBLE${NC}"
+            else
+                echo -e " Xray API: ${RED}NOT ACCESSIBLE${NC}"
+                echo -e "   Error: $(echo "$test_stats" | grep -i "error\|failed\|refused\|denied" | head -1)"
+            fi
         else
             echo -e " Xray API: ${RED}NOT ACCESSIBLE${NC}"
-            echo -e "   Error: $(echo "$test_stats" | head -1)"
+            echo -e "   Exit code: $api_exit_code"
         fi
     else
         echo -e " Xray Binary: ${RED}NOT FOUND${NC}"

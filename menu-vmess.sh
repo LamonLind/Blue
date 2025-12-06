@@ -195,7 +195,8 @@ exp=$(grep -E "^#vmsg " "/etc/xray/config.json" | cut -d ' ' -f 3 | sed -n "${CL
 sed -i "/^#vmsg $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vms $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vmsx $user $exp/,/^},{/d" /etc/xray/config.json
-# Also delete ### entries (used for vmess quota/worryfree)
+# Also delete ### entries used for special vmess endpoints (worryfree and quota-habis paths)
+# These are alternate paths configured in add-ws.sh for specific use cases
 sed -i "/^### $user $exp/,/^},{/d" /etc/xray/config.json
 rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
 rm -f /home/vps/public_html/vmess-$user.txt

@@ -73,14 +73,14 @@ get_xray_user_bandwidth() {
                 BEGIN { up=0; down=0 }
                 {
                     # Match uplink and extract value
-                    if (match($0, "user>>>" user ">>>traffic>>>uplink[^}]*value[^0-9]*([0-9]+)")) {
+                    if (match($0, "user>>>" user ">>>traffic>>>uplink[^}]*value[^0-9]*[0-9]+")) {
                         s = substr($0, RSTART, RLENGTH)
                         gsub(/.*value[^0-9]*/, "", s)
                         gsub(/[^0-9].*/, "", s)
                         up = s
                     }
                     # Match downlink and extract value
-                    if (match($0, "user>>>" user ">>>traffic>>>downlink[^}]*value[^0-9]*([0-9]+)")) {
+                    if (match($0, "user>>>" user ">>>traffic>>>downlink[^}]*value[^0-9]*[0-9]+")) {
                         s = substr($0, RSTART, RLENGTH)
                         gsub(/.*value[^0-9]*/, "", s)
                         gsub(/[^0-9].*/, "", s)

@@ -184,7 +184,8 @@ get_ssh_user_bandwidth() {
     # Get bytes from the custom chain
     # This tracks OUTPUT (outbound) traffic only as per requirement.
     # Only outbound traffic from the VPS is measured for bandwidth limits.
-    # INPUT tracking via owner match is not possible in iptables.
+    # Note: INPUT tracking via owner match is not possible in iptables.
+    # Bandwidth limits should account for outbound-only measurement.
     local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
     out_bytes=${out_bytes:-0}
     
@@ -382,7 +383,8 @@ delete_ssh_user() {
     # Check if user exists using getent (same as menu-ssh.sh)
     if getent passwd "$user" > /dev/null 2>&1; then
         # Get UID before deleting user for iptables cleanup
-        local uid=$(id -u "$user" 2>/dev/null)
+        # Use getent to avoid race conditions
+        local uid=$(getent passwd "$user" 2>/dev/null | cut -d: -f3)
         # Cleanup iptables rules for this user
         if [ -n "$uid" ]; then
             cleanup_ssh_iptables "$uid"

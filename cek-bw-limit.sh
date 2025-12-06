@@ -383,8 +383,8 @@ delete_ssh_user() {
     # Check if user exists using getent (same as menu-ssh.sh)
     if getent passwd "$user" > /dev/null 2>&1; then
         # Get UID before deleting user for iptables cleanup
-        # Use getent to avoid race conditions
-        local uid=$(getent passwd "$user" 2>/dev/null | cut -d: -f3)
+        # Use id -u to match menu-ssh.sh pattern (line 91)
+        local uid=$(id -u "$user" 2>/dev/null)
         # Cleanup iptables rules for this user
         if [ -n "$uid" ]; then
             cleanup_ssh_iptables "$uid"

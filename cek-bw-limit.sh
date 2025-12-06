@@ -65,11 +65,28 @@ get_xray_user_bandwidth() {
     if [ -f "$_Xray" ]; then
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
-            # Parse upload and download bytes using awk for efficiency
-            local traffic=$(echo "$stats" | awk -v user="$username" '
+            # Flatten JSON to single line for reliable parsing across all JSON formats
+            local flat_stats=$(echo "$stats" | tr -d '\n\t')
+            
+            # Parse upload and download bytes using awk
+            local traffic=$(echo "$flat_stats" | awk -v user="$username" '
                 BEGIN { up=0; down=0 }
-                $0 ~ "\"name\":.*user>>>" user ">>>traffic>>>uplink" { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); up=$2 } }
-                $0 ~ "\"name\":.*user>>>" user ">>>traffic>>>downlink" { getline; if(/"value":/) { gsub(/[^0-9]/,"",$2); down=$2 } }
+                {
+                    # Match uplink and extract value
+                    if (match($0, "user>>>" user ">>>traffic>>>uplink[^}]*value[^0-9]*[0-9]+")) {
+                        s = substr($0, RSTART, RLENGTH)
+                        gsub(/.*value[^0-9]*/, "", s)
+                        gsub(/[^0-9].*/, "", s)
+                        up = s
+                    }
+                    # Match downlink and extract value
+                    if (match($0, "user>>>" user ">>>traffic>>>downlink[^}]*value[^0-9]*[0-9]+")) {
+                        s = substr($0, RSTART, RLENGTH)
+                        gsub(/.*value[^0-9]*/, "", s)
+                        gsub(/[^0-9].*/, "", s)
+                        down = s
+                    }
+                }
                 END { print up " " down }
             ')
             local up_bytes=$(echo "$traffic" | awk '{print $1}')

@@ -76,7 +76,9 @@ get_xray_user_bandwidth() {
                     
                     # Check if line contains multiple JSON objects (compact format)
                     # This handles lines like: {"name":"...","value":"..."},{"name":"...","value":"..."}
-                    if (gsub(/},{/, "},{", line) > 0 || (match(line, /"name"[[:space:]]*:/) && match(line, /"value"[[:space:]]*:/))) {
+                    # Use match() to avoid side effects from gsub()
+                    is_compact = (match(line, /},{/) > 0) || (match(line, /"name"[[:space:]]*:/) && match(line, /"value"[[:space:]]*:/))
+                    if (is_compact) {
                         # Compact JSON - split entries and process each
                         n = split($0, entries, /},{/)
                         for (i = 1; i <= n; i++) {
@@ -204,8 +206,9 @@ get_user_bandwidth() {
     local baseline=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
     baseline=${baseline:-0}
     
-    # Detect xray stats reset: if current stats < last known stats, xray was restarted
-    if [ "$current_stats" -lt "$last_stats" ] && [ "$last_stats" -gt 0 ]; then
+    # Detect xray stats reset: current stats < last known stats indicates xray was restarted
+    # This includes the case when current_stats is 0 (xray just restarted)
+    if [ "$last_stats" -gt 0 ] && [ "$current_stats" -lt "$last_stats" ]; then
         # Xray stats were reset, add last known stats to baseline
         baseline=$((baseline + last_stats))
         # Update baseline file
@@ -512,9 +515,6 @@ save_usage_to_file() {
     
     # Only update if we have xray stats (to avoid resetting on API failures)
     if [ "$current_xray_usage" -gt 0 ]; then
-        # Store total usage, then reset xray stats counter by calling api with reset
-        # Actually, we can't reset individual user stats easily, so just store the total
-        # and we'll handle the double-counting in get_user_bandwidth
         sed -i "/^$username /d" "$BW_USAGE_FILE"
         echo "$username $total" >> "$BW_USAGE_FILE"
     fi

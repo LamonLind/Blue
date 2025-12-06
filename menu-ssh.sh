@@ -66,6 +66,18 @@ export NETWORK_IFACE="$(ip route show to default | awk '{print $5}')"
 
 
 clear
+# Function to cleanup SSH user iptables rules
+cleanup_ssh_iptables() {
+    local uid=$1
+    local chain_name="BW_${uid}"
+    
+    # Remove reference from OUTPUT chain
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    # Flush and delete the custom chain
+    iptables -F "$chain_name" 2>/dev/null
+    iptables -X "$chain_name" 2>/dev/null
+}
+
 function del(){
 clear
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
@@ -75,6 +87,12 @@ echo ""
 read -p "Username SSH to Delete : " Pengguna
 
 if getent passwd $Pengguna > /dev/null 2>&1; then
+        # Get UID before deleting user for iptables cleanup
+        local uid=$(id -u "$Pengguna" 2>/dev/null)
+        # Cleanup iptables rules for this user
+        if [ -n "$uid" ]; then
+            cleanup_ssh_iptables "$uid"
+        fi
         userdel $Pengguna > /dev/null 2>&1
         rm -f /home/vps/public_html/ssh-$Pengguna.txt
         # Remove bandwidth limit and tracking entries
@@ -125,6 +143,13 @@ clear
                else
                echo "echo "Expired- Username : $username are expired at: $tgl $bulantahun and removed : $hariini "" >> /usr/local/bin/deleteduser
 	           echo "Username $username that are expired at $tgl $bulantahun removed from the VPS $hariini"
+               # Get UID before deleting user for iptables cleanup (strip trailing spaces)
+               local clean_username="${username%% *}"
+               local uid=$(id -u "$clean_username" 2>/dev/null)
+               # Cleanup iptables rules for this user
+               if [ -n "$uid" ]; then
+                   cleanup_ssh_iptables "$uid"
+               fi
                userdel $username
                # Remove bandwidth limit and tracking entries
                sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null

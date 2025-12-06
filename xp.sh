@@ -79,6 +79,7 @@ rm -f /home/vps/public_html/vmess-$user.txt
 # Remove bandwidth limit entry
 sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
 sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 fi
 done
 
@@ -98,6 +99,7 @@ rm -f /home/vps/public_html/vless-$user.txt
 # Remove bandwidth limit entry
 sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
 sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 fi
 done
 
@@ -117,6 +119,7 @@ rm -f /home/vps/public_html/trojan-$user.txt
 # Remove bandwidth limit entry
 sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
 sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 fi
 done
 
@@ -137,6 +140,7 @@ rm -f /home/vps/public_html/sodosokgrpc-$user.txt
 # Remove bandwidth limit entry
 sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
 sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 fi
 done
 
@@ -172,11 +176,11 @@ then
 :
 else
 # Get UID before deleting user for iptables cleanup (strip trailing spaces)
-local clean_username="${username%% *}"
-local uid=$(id -u "$clean_username" 2>/dev/null)
+clean_username="${username%% *}"
+uid=$(id -u "$clean_username" 2>/dev/null)
 # Cleanup iptables rules for this user
 if [ -n "$uid" ]; then
-    local chain_name="BW_${uid}"
+    chain_name="BW_${uid}"
     iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
     iptables -F "$chain_name" 2>/dev/null
     iptables -X "$chain_name" 2>/dev/null

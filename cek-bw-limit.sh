@@ -148,7 +148,7 @@ get_xray_user_bandwidth() {
             up_bytes=${up_bytes:-0}
             down_bytes=${down_bytes:-0}
             # Only count outbound (uplink) traffic for bandwidth monitoring
-            # This matches SSH behavior and the requirement to only record outbound data
+            # Per requirement: just record outbound traffic of the VPS and measure accordingly
             total_bytes=$up_bytes
         fi
     fi
@@ -182,10 +182,9 @@ get_ssh_user_bandwidth() {
     fi
     
     # Get bytes from the custom chain
-    # Note: This tracks OUTPUT (upload) traffic only. 
+    # This tracks OUTPUT (outbound) traffic only as per requirement.
+    # Only outbound traffic from the VPS is measured for bandwidth limits.
     # INPUT tracking via owner match is not possible in iptables.
-    # For accurate bidirectional tracking, this value represents uploads.
-    # Consider setting limits based on upload bandwidth or use a multiplier in limit calculation.
     local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
     out_bytes=${out_bytes:-0}
     

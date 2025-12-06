@@ -323,6 +323,7 @@ mkdir -p /etc/xray
 touch /etc/xray/bw-limit.conf 2>/dev/null
 touch /etc/xray/bw-usage.conf 2>/dev/null
 touch /etc/xray/bw-disabled.conf 2>/dev/null
+touch /etc/xray/bw-last-stats.conf 2>/dev/null
 
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable bw-limit-check >/dev/null 2>&1

@@ -46,11 +46,13 @@ fi
 BW_LIMIT_FILE="/etc/xray/bw-limit.conf"
 BW_USAGE_FILE="/etc/xray/bw-usage.conf"
 BW_DISABLED_FILE="/etc/xray/bw-disabled.conf"
+BW_LAST_STATS_FILE="/etc/xray/bw-last-stats.conf"
 
 # // Create files if they don't exist
 touch "$BW_LIMIT_FILE" 2>/dev/null
 touch "$BW_USAGE_FILE" 2>/dev/null
 touch "$BW_DISABLED_FILE" 2>/dev/null
+touch "$BW_LAST_STATS_FILE" 2>/dev/null
 
 # // Xray API configuration
 _APISERVER=127.0.0.1:10085
@@ -65,26 +67,72 @@ get_xray_user_bandwidth() {
     if [ -f "$_Xray" ]; then
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
-            # Flatten JSON to single line for reliable parsing across all JSON formats
-            local flat_stats=$(echo "$stats" | tr -d '\n\t')
-            
             # Parse upload and download bytes using awk
-            local traffic=$(echo "$flat_stats" | awk -v user="$username" '
-                BEGIN { up=0; down=0 }
+            # This approach handles both multi-line and single-line/compact JSON formats
+            local traffic=$(echo "$stats" | awk -v user="$username" '
+                BEGIN { up=0; down=0; current_name="" }
                 {
-                    # Match uplink and extract value
-                    if (match($0, "user>>>" user ">>>traffic>>>uplink[^}]*value[^0-9]*[0-9]+")) {
-                        s = substr($0, RSTART, RLENGTH)
-                        gsub(/.*value[^0-9]*/, "", s)
-                        gsub(/[^0-9].*/, "", s)
-                        up = s
+                    line = $0
+                    
+                    # Check if line contains multiple JSON objects (compact format)
+                    # This handles lines like: {"name":"...","value":"..."},{"name":"...","value":"..."}
+                    # Use match() to avoid side effects from gsub()
+                    is_compact = (match(line, /},{/) > 0) || (match(line, /"name"[[:space:]]*:/) && match(line, /"value"[[:space:]]*:/))
+                    if (is_compact) {
+                        # Compact JSON - split entries and process each
+                        n = split($0, entries, /},{/)
+                        for (i = 1; i <= n; i++) {
+                            entry = entries[i]
+                            
+                            # Check if this entry contains our user pattern
+                            pattern = "user>>>" user ">>>traffic>>>"
+                            if (index(entry, pattern) > 0) {
+                                # Extract name
+                                temp = entry
+                                gsub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", temp)
+                                name = temp
+                                gsub(/".*/, "", name)
+                                
+                                # Extract value
+                                temp2 = entry
+                                gsub(/.*"value"[[:space:]]*:[[:space:]]*"?/, "", temp2)
+                                gsub(/"?[,}\]].*/, "", temp2)
+                                gsub(/[^0-9]/, "", temp2)
+                                val = temp2
+                                if (val == "") val = 0
+                                
+                                if (name == "user>>>" user ">>>traffic>>>uplink") {
+                                    up = val
+                                }
+                                if (name == "user>>>" user ">>>traffic>>>downlink") {
+                                    down = val
+                                }
+                            }
+                        }
                     }
-                    # Match downlink and extract value
-                    if (match($0, "user>>>" user ">>>traffic>>>downlink[^}]*value[^0-9]*[0-9]+")) {
-                        s = substr($0, RSTART, RLENGTH)
-                        gsub(/.*value[^0-9]*/, "", s)
-                        gsub(/[^0-9].*/, "", s)
-                        down = s
+                    else {
+                        # Multi-line JSON format - handle name and value on separate lines
+                        if (match(line, /"name":/)) {
+                            temp = line
+                            gsub(/.*"name"[[:space:]]*:[[:space:]]*"/, "", temp)
+                            gsub(/".*/, "", temp)
+                            current_name = temp
+                        }
+                        if (match(line, /"value":/) && current_name != "") {
+                            val = line
+                            gsub(/.*"value"[[:space:]]*:[[:space:]]*"?/, "", val)
+                            gsub(/"?[,}].*/, "", val)
+                            gsub(/[^0-9]/, "", val)
+                            if (val == "") val = 0
+                            
+                            if (current_name == "user>>>" user ">>>traffic>>>uplink") {
+                                up = val
+                            }
+                            if (current_name == "user>>>" user ">>>traffic>>>downlink") {
+                                down = val
+                            }
+                            current_name = ""
+                        }
                     }
                 }
                 END { print up " " down }
@@ -138,22 +186,42 @@ get_ssh_user_bandwidth() {
 }
 
 # // Function to get user bandwidth usage based on account type
+# // This handles xray stats reset by tracking last known stats and baseline
 get_user_bandwidth() {
     local username=$1
     local account_type=$2
-    local total_bytes=0
+    local current_stats=0
     
     if [ "$account_type" = "ssh" ]; then
-        total_bytes=$(get_ssh_user_bandwidth "$username")
+        current_stats=$(get_ssh_user_bandwidth "$username")
     else
-        total_bytes=$(get_xray_user_bandwidth "$username")
+        current_stats=$(get_xray_user_bandwidth "$username")
     fi
     
-    # Add stored usage from file (for persistent tracking)
-    local stored_usage=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
-    stored_usage=${stored_usage:-0}
+    # Get last known xray stats (before any reset)
+    local last_stats=$(grep "^$username " "$BW_LAST_STATS_FILE" 2>/dev/null | awk '{print $2}')
+    last_stats=${last_stats:-0}
     
-    echo $((total_bytes + stored_usage))
+    # Get stored baseline usage (accumulated from previous xray sessions)
+    local baseline=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
+    baseline=${baseline:-0}
+    
+    # Detect xray stats reset: current stats < last known stats indicates xray was restarted
+    # This includes the case when current_stats is 0 (xray just restarted)
+    if [ "$last_stats" -gt 0 ] && [ "$current_stats" -lt "$last_stats" ]; then
+        # Xray stats were reset, add last known stats to baseline
+        baseline=$((baseline + last_stats))
+        # Update baseline file
+        sed -i "/^$username /d" "$BW_USAGE_FILE"
+        echo "$username $baseline" >> "$BW_USAGE_FILE"
+    fi
+    
+    # Update last known stats
+    sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
+    echo "$username $current_stats" >> "$BW_LAST_STATS_FILE"
+    
+    # Total usage = baseline + current xray stats
+    echo $((baseline + current_stats))
 }
 
 # // Function to convert MB to bytes
@@ -331,7 +399,8 @@ check_bandwidth_limits() {
             continue
         fi
         
-        # Get current bandwidth usage
+        # Get current bandwidth usage (includes baseline + current xray stats)
+        # Note: get_user_bandwidth handles xray stats reset detection internally
         local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local limit_bytes=$(mb_to_bytes "$limit_mb")
         
@@ -358,9 +427,10 @@ check_bandwidth_limits() {
                     ;;
             esac
             
-            # Remove from bandwidth limit file
+            # Remove from bandwidth limit file and tracking files
             sed -i "/^$username /d" "$BW_LIMIT_FILE"
             sed -i "/^$username /d" "$BW_USAGE_FILE"
+            sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
             
             ((deleted_count++))
         fi
@@ -424,25 +494,30 @@ add_bandwidth_limit() {
 }
 
 # // Function to save current usage to persistent storage
+# // This updates the stored baseline when xray stats are higher than stored value
 save_usage_to_file() {
     local username=$1
     local account_type=$2
-    local current_usage=0
+    local current_xray_usage=0
     
     if [ "$account_type" = "ssh" ]; then
-        current_usage=$(get_ssh_user_bandwidth "$username")
+        current_xray_usage=$(get_ssh_user_bandwidth "$username")
     else
-        current_usage=$(get_xray_user_bandwidth "$username")
+        current_xray_usage=$(get_xray_user_bandwidth "$username")
     fi
     
-    # Read stored usage BEFORE deleting the entry
+    # Read stored usage
     local stored_usage=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
     stored_usage=${stored_usage:-0}
     
-    # Update usage file
-    sed -i "/^$username /d" "$BW_USAGE_FILE"
-    local total=$((stored_usage + current_usage))
-    echo "$username $total" >> "$BW_USAGE_FILE"
+    # Calculate total usage (stored baseline + current xray stats)
+    local total=$((stored_usage + current_xray_usage))
+    
+    # Only update if we have xray stats (to avoid resetting on API failures)
+    if [ "$current_xray_usage" -gt 0 ]; then
+        sed -i "/^$username /d" "$BW_USAGE_FILE"
+        echo "$username $total" >> "$BW_USAGE_FILE"
+    fi
 }
 
 # // Function to reset user usage (renew)
@@ -463,8 +538,9 @@ reset_user_usage() {
     # Get account type
     local account_type=$(grep "^$username " "$BW_LIMIT_FILE" | awk '{print $3}')
     
-    # Remove from usage file
+    # Remove from usage file and last stats file
     sed -i "/^$username /d" "$BW_USAGE_FILE"
+    sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
     
     # Reset iptables counters for SSH users
     if [ "$account_type" = "ssh" ]; then
@@ -487,8 +563,9 @@ reset_all_usage() {
         reset_user_usage "$username"
     done < "$BW_LIMIT_FILE"
     
-    # Clear usage file
+    # Clear usage and last stats files
     > "$BW_USAGE_FILE"
+    > "$BW_LAST_STATS_FILE"
     
     echo -e "[${GREEN} OKEY ${NC}] All user usage has been reset"
 }
@@ -624,6 +701,7 @@ remove_user_limit() {
     
     sed -i "/^$username /d" "$BW_LIMIT_FILE"
     sed -i "/^$username /d" "$BW_USAGE_FILE"
+    sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
     echo -e "[${GREEN} OKEY ${NC}] Limit removed for user: $username"
 }
 

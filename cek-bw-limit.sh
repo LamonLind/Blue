@@ -199,6 +199,10 @@ get_user_bandwidth() {
     
     if [ "$account_type" = "ssh" ]; then
         current_stats=$(get_ssh_user_bandwidth "$username")
+        # For SSH, iptables counters persist until manually reset
+        # No need for xray-style reset detection
+        echo $current_stats
+        return
     else
         current_stats=$(get_xray_user_bandwidth "$username")
     fi

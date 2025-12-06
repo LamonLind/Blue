@@ -185,7 +185,7 @@ if [ -n "$uid" ]; then
     iptables -F "$chain_name" 2>/dev/null
     iptables -X "$chain_name" 2>/dev/null
 fi
-userdel --force $username
+userdel --force "$clean_username"
 # Remove bandwidth limit entry for SSH user (all three files)
 sed -i "/^${clean_username} /d" /etc/xray/bw-limit.conf 2>/dev/null
 sed -i "/^${clean_username} /d" /etc/xray/bw-usage.conf 2>/dev/null

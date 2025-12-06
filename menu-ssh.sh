@@ -77,9 +77,10 @@ read -p "Username SSH to Delete : " Pengguna
 if getent passwd $Pengguna > /dev/null 2>&1; then
         userdel $Pengguna > /dev/null 2>&1
         rm -f /home/vps/public_html/ssh-$Pengguna.txt
-        # Remove bandwidth limit entry
+        # Remove bandwidth limit and tracking entries
         sed -i "/^$Pengguna /d" /etc/xray/bw-limit.conf 2>/dev/null
         sed -i "/^$Pengguna /d" /etc/xray/bw-usage.conf 2>/dev/null
+        sed -i "/^$Pengguna /d" /etc/xray/bw-last-stats.conf 2>/dev/null
         echo -e "User $Pengguna was removed."
 else
         echo -e "Failure: User $Pengguna Not Exist."
@@ -125,9 +126,10 @@ clear
                echo "echo "Expired- Username : $username are expired at: $tgl $bulantahun and removed : $hariini "" >> /usr/local/bin/deleteduser
 	           echo "Username $username that are expired at $tgl $bulantahun removed from the VPS $hariini"
                userdel $username
-               # Remove bandwidth limit entry
+               # Remove bandwidth limit and tracking entries
                sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null
                sed -i "/^${username%% *} /d" /etc/xray/bw-usage.conf 2>/dev/null
+               sed -i "/^${username%% *} /d" /etc/xray/bw-last-stats.conf 2>/dev/null
                fi
                done
                echo " "

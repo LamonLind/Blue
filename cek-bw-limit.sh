@@ -169,24 +169,26 @@ get_ssh_user_bandwidth() {
     # Create unique chain name for this user to track bandwidth
     local chain_name="BW_${uid}"
     
-    # Check if user chain exists, if not create it with rules for both directions
+    # Check if user chain exists, if not create it
     if ! iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
         # Create a custom chain for this user
         iptables -N "$chain_name" 2>/dev/null
-        # Add rule to OUTPUT to track outgoing traffic by user
+        # Add rule to OUTPUT to track outgoing traffic by user (upload)
         iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
         # Add RETURN rule to continue processing
         iptables -A "$chain_name" -j RETURN 2>/dev/null
     fi
     
-    # Get bytes from the custom chain (tracks both directions via owner match in OUTPUT)
-    # For SSH, most traffic is bidirectional so we estimate total by doubling outgoing
+    # Get bytes from the custom chain
+    # Note: This tracks OUTPUT (upload) traffic only. 
+    # INPUT tracking via owner match is not possible in iptables.
+    # For accurate bidirectional tracking, this value represents uploads.
+    # Consider setting limits based on upload bandwidth or use a multiplier in limit calculation.
     local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
     out_bytes=${out_bytes:-0}
     
-    # SSH traffic is roughly symmetric, so estimate total as output * 2 to account for both directions
-    # This provides a more accurate bandwidth measurement for SSH users
-    total_bytes=$((out_bytes * 2))
+    # Return output bytes as the bandwidth measurement
+    total_bytes=$out_bytes
     echo $total_bytes
 }
 

@@ -147,7 +147,9 @@ get_xray_user_bandwidth() {
             
             up_bytes=${up_bytes:-0}
             down_bytes=${down_bytes:-0}
-            total_bytes=$((up_bytes + down_bytes))
+            # Only count outbound (uplink) traffic for bandwidth monitoring
+            # Per requirement: just record outbound traffic of the VPS and measure accordingly
+            total_bytes=$up_bytes
         fi
     fi
     
@@ -180,10 +182,10 @@ get_ssh_user_bandwidth() {
     fi
     
     # Get bytes from the custom chain
-    # Note: This tracks OUTPUT (upload) traffic only. 
-    # INPUT tracking via owner match is not possible in iptables.
-    # For accurate bidirectional tracking, this value represents uploads.
-    # Consider setting limits based on upload bandwidth or use a multiplier in limit calculation.
+    # This tracks OUTPUT (outbound) traffic only as per requirement.
+    # Only outbound traffic from the VPS is measured for bandwidth limits.
+    # Note: INPUT tracking via owner match is not possible in iptables.
+    # Bandwidth limits should account for outbound-only measurement.
     local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
     out_bytes=${out_bytes:-0}
     
@@ -373,27 +375,28 @@ cleanup_ssh_iptables() {
     iptables -X "$chain_name" 2>/dev/null
 }
 
-# // Function to delete SSH user (non-main accounts only)
+# // Function to delete SSH user
+# // Uses the same deletion pattern as menu-ssh.sh del() function
 delete_ssh_user() {
     local user=$1
-    # Check if user exists and get UID using getent (consistent with menu-ssh.sh)
-    local passwd_entry=$(getent passwd "$user" 2>/dev/null)
-    if [ -n "$passwd_entry" ]; then
-        # Get UID from passwd entry to ensure we don't delete system users
-        local uid_min=$(grep "^UID_MIN" /etc/login.defs 2>/dev/null | awk '{print $2}')
-        uid_min=${uid_min:-1000}
-        local uid=$(echo "$passwd_entry" | cut -d: -f3)
-        if [ -n "$uid" ] && [ "$uid" -ge "$uid_min" ]; then
-            # Cleanup iptables rules for this user before deletion
+    
+    # Check if user exists using getent (same as menu-ssh.sh)
+    if getent passwd "$user" > /dev/null 2>&1; then
+        # Get UID before deleting user for iptables cleanup
+        # Use getent to avoid race conditions
+        local uid=$(getent passwd "$user" 2>/dev/null | cut -d: -f3)
+        # Cleanup iptables rules for this user
+        if [ -n "$uid" ]; then
             cleanup_ssh_iptables "$uid"
-            userdel "$user" > /dev/null 2>&1
-            rm -f /home/vps/public_html/ssh-"$user".txt
-            echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
-            return 0
         fi
+        userdel "$user" > /dev/null 2>&1
+        rm -f /home/vps/public_html/ssh-"$user".txt
+        echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
+        return 0
+    else
+        echo -e "[${YELLOW} WARN ${NC}] SSH user $user not found"
+        return 1
     fi
-    echo -e "[${YELLOW} WARN ${NC}] SSH user $user not found or is a system user"
-    return 1
 }
 
 # // Main function to check bandwidth limits

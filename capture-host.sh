@@ -175,6 +175,7 @@ capture_ssh_hosts() {
 # Captures: HTTP Host header, SNI (Server Name Indication), Proxy Host
 # These are the most common ways users specify custom domains in Xray protocols
 # Also captures source IP addresses for each connection
+# Enhanced with better regex patterns and more header types
 capture_xray_hosts() {
     local XRAY_LOG="/var/log/xray/access.log"
     local XRAY_LOG2="/var/log/xray/access2.log"
@@ -188,26 +189,44 @@ capture_xray_hosts() {
             # Extract source IP from line (typically at start or after "from")
             local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
             
-            # Extract Host header
-            local host=$(echo "$line" | grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}")
+            # Extract Host header (multiple patterns for various log formats)
+            local host=$(echo "$line" | grep -oiP "(host[=:\s]+|Host:\s*|\"host\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "Header-Host" "$source_ip"
             fi
             
-            # Extract SNI (Server Name Indication)
-            local sni=$(echo "$line" | grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}")
+            # Extract SNI (Server Name Indication) - multiple patterns
+            local sni=$(echo "$line" | grep -oiP "(sni[=:\s]+|serverName[=:\s]+|server_name[=:\s]+|\"sni\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$sni" ] && echo "$sni" | grep -q '[a-zA-Z]'; then
                 add_host "$sni" "SNI" "$source_ip"
             fi
             
-            # Extract Proxy Host
-            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}")
+            # Extract Proxy Host and X-Forwarded-Host
+            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:\s]+|X-Forwarded-Host:\s*|\"proxyHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
                 add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
             
+            # Extract ws-host, grpc-service-name, and other custom headers from VPN configs
+            local ws_host=$(echo "$line" | grep -oiP "(ws[_-]?[Hh]ost[=:\s]+|\"wsHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$ws_host" ] && echo "$ws_host" | grep -q '[a-zA-Z]'; then
+                add_host "$ws_host" "WS-Host" "$source_ip"
+            fi
+            
+            # Extract grpc service name (often contains domain)
+            local grpc_service=$(echo "$line" | grep -oiP "(serviceName[=:\s]+|\"serviceName\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$grpc_service" ] && echo "$grpc_service" | grep -q '[a-zA-Z]'; then
+                add_host "$grpc_service" "gRPC-Service" "$source_ip"
+            fi
+            
+            # Extract address/serverAddress from custom configs
+            local server_addr=$(echo "$line" | grep -oiP "(address[=:\s]+|serverAddress[=:\s]+|\"address\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$server_addr" ] && echo "$server_addr" | grep -q '[a-zA-Z]'; then
+                add_host "$server_addr" "Server-Address" "$source_ip"
+            fi
+            
             # Extract destination domains (format: -> domain:port or accepted domain:port)
-            local dest_host=$(echo "$line" | grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" | head -1)
+            local dest_host=$(echo "$line" | grep -oP "(->|accepted|to)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" | head -1)
             if [ -n "$dest_host" ] && echo "$dest_host" | grep -q '[a-zA-Z]'; then
                 # Determine protocol from log line
                 local protocol="XRAY"
@@ -217,40 +236,64 @@ capture_xray_hosts() {
                     protocol="VMESS"
                 elif echo "$line" | grep -qi "trojan"; then
                     protocol="Trojan"
-                elif echo "$line" | grep -qi "shadowsocks"; then
+                elif echo "$line" | grep -qi "shadowsocks\|ss"; then
                     protocol="Shadowsocks"
                 fi
                 add_host "$dest_host" "$protocol" "$source_ip"
             fi
+            
+            # Extract path-based hosts (e.g., /path?host=example.com)
+            local path_host=$(echo "$line" | grep -oiP "[\?&]host=\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$path_host" ] && echo "$path_host" | grep -q '[a-zA-Z]'; then
+                add_host "$path_host" "Query-Host" "$source_ip"
+            fi
         done
     fi
     
-    # Process second xray log (same logic as above)
+    # Process second xray log (same enhanced logic as above)
     if [ -f "$XRAY_LOG2" ]; then
         tail -n 1000 "$XRAY_LOG2" 2>/dev/null | while read -r line; do
             # Extract source IP from line
             local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
             
-            # Extract Host header
-            local host=$(echo "$line" | grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}")
+            # Extract Host header (multiple patterns)
+            local host=$(echo "$line" | grep -oiP "(host[=:\s]+|Host:\s*|\"host\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
                 add_host "$host" "Header-Host" "$source_ip"
             fi
             
             # Extract SNI
-            local sni=$(echo "$line" | grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}")
+            local sni=$(echo "$line" | grep -oiP "(sni[=:\s]+|serverName[=:\s]+|server_name[=:\s]+|\"sni\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$sni" ] && echo "$sni" | grep -q '[a-zA-Z]'; then
                 add_host "$sni" "SNI" "$source_ip"
             fi
             
             # Extract Proxy Host
-            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}")
+            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:\s]+|X-Forwarded-Host:\s*|\"proxyHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
                 add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
             
+            # Extract ws-host
+            local ws_host=$(echo "$line" | grep -oiP "(ws[_-]?[Hh]ost[=:\s]+|\"wsHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$ws_host" ] && echo "$ws_host" | grep -q '[a-zA-Z]'; then
+                add_host "$ws_host" "WS-Host" "$source_ip"
+            fi
+            
+            # Extract grpc service name
+            local grpc_service=$(echo "$line" | grep -oiP "(serviceName[=:\s]+|\"serviceName\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$grpc_service" ] && echo "$grpc_service" | grep -q '[a-zA-Z]'; then
+                add_host "$grpc_service" "gRPC-Service" "$source_ip"
+            fi
+            
+            # Extract server address
+            local server_addr=$(echo "$line" | grep -oiP "(address[=:\s]+|serverAddress[=:\s]+|\"address\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$server_addr" ] && echo "$server_addr" | grep -q '[a-zA-Z]'; then
+                add_host "$server_addr" "Server-Address" "$source_ip"
+            fi
+            
             # Extract destination domains
-            local dest_host=$(echo "$line" | grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" | head -1)
+            local dest_host=$(echo "$line" | grep -oP "(->|accepted|to)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" | head -1)
             if [ -n "$dest_host" ] && echo "$dest_host" | grep -q '[a-zA-Z]'; then
                 # Determine protocol from log line
                 local protocol="XRAY"
@@ -260,10 +303,16 @@ capture_xray_hosts() {
                     protocol="VMESS"
                 elif echo "$line" | grep -qi "trojan"; then
                     protocol="Trojan"
-                elif echo "$line" | grep -qi "shadowsocks"; then
+                elif echo "$line" | grep -qi "shadowsocks\|ss"; then
                     protocol="Shadowsocks"
                 fi
                 add_host "$dest_host" "$protocol" "$source_ip"
+            fi
+            
+            # Extract path-based hosts
+            local path_host=$(echo "$line" | grep -oiP "[\?&]host=\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$path_host" ] && echo "$path_host" | grep -q '[a-zA-Z]'; then
+                add_host "$path_host" "Query-Host" "$source_ip"
             fi
         done
     fi

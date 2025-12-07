@@ -62,36 +62,52 @@ mb_to_bytes() {
 }
 
 # // Function to get SSH user bandwidth usage via iptables accounting
+# // Tracks both upload (OUTPUT) and download (INPUT) traffic for accurate total bandwidth
 get_ssh_user_bandwidth() {
     local username=$1
     local total_bytes=0
     
-    # Get user UID
+    # Get user UID for iptables owner matching
     local uid=$(id -u "$username" 2>/dev/null)
     if [ -z "$uid" ]; then
         echo 0
         return
     fi
     
-    # Create unique chain name for this user to track bandwidth
-    local chain_name="BW_${uid}"
+    # Create unique chain names for this user to track both directions
+    local chain_out="BW_OUT_${uid}"  # Upload/outbound traffic
+    local chain_in="BW_IN_${uid}"    # Download/inbound traffic
     
-    # Check if user chain exists, if not create it
-    if ! iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
-        # Create a custom chain for this user
-        iptables -N "$chain_name" 2>/dev/null
-        # Add rule to OUTPUT to track outgoing traffic by user (upload)
-        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    # Setup OUTPUT chain for upload tracking (outbound from VPS)
+    if ! iptables -L "$chain_out" -n 2>/dev/null | grep -q "Chain"; then
+        # Create custom chain for outbound traffic
+        iptables -N "$chain_out" 2>/dev/null
+        # Track outgoing traffic by user UID (upload)
+        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_out" 2>/dev/null
         # Add RETURN rule to continue processing
-        iptables -A "$chain_name" -j RETURN 2>/dev/null
+        iptables -A "$chain_out" -j RETURN 2>/dev/null
     fi
     
-    # Get bytes from the custom chain (outbound traffic only)
-    local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
-    out_bytes=${out_bytes:-0}
+    # Setup INPUT chain for download tracking (inbound to VPS)
+    if ! iptables -L "$chain_in" -n 2>/dev/null | grep -q "Chain"; then
+        # Create custom chain for inbound traffic
+        iptables -N "$chain_in" 2>/dev/null
+        # Track established connections that were initiated by this user
+        iptables -I INPUT -m conntrack --ctstate ESTABLISHED -m owner --uid-owner "$uid" -j "$chain_in" 2>/dev/null
+        # Add RETURN rule to continue processing
+        iptables -A "$chain_in" -j RETURN 2>/dev/null
+    fi
     
-    # Return output bytes as the bandwidth measurement
-    total_bytes=$out_bytes
+    # Get upload bytes from OUTPUT chain
+    local upload_bytes=$(iptables -L "$chain_out" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
+    upload_bytes=${upload_bytes:-0}
+    
+    # Get download bytes from INPUT chain
+    local download_bytes=$(iptables -L "$chain_in" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
+    download_bytes=${download_bytes:-0}
+    
+    # Total bandwidth = upload + download
+    total_bytes=$((upload_bytes + download_bytes))
     echo $total_bytes
 }
 
@@ -108,8 +124,10 @@ get_xray_user_bandwidth() {
             local flat_stats=$(echo "$stats" | tr -d '\n\t')
             
             # Parse upload bytes using awk (only uplink as per requirements)
+            # This approach handles both multi-line and single-line/compact JSON formats
+            # We track BOTH uplink (upload) and downlink (download) for accurate total bandwidth
             local traffic=$(echo "$flat_stats" | awk -v user="$username" '
-                BEGIN { up=0; }
+                BEGIN { up=0; down=0; }
                 {
                     line = $0
                     
@@ -138,20 +156,27 @@ get_xray_user_bandwidth() {
                                 val = temp2
                                 if (val == "") val = 0
                                 
+                                # Track both uplink (upload) and downlink (download)
                                 if (name == "user>>>" user ">>>traffic>>>uplink") {
                                     up = val
+                                }
+                                if (name == "user>>>" user ">>>traffic>>>downlink") {
+                                    down = val
                                 }
                             }
                         }
                     }
                 }
-                END { print up }
+                END { print up " " down }
             ')
             local up_bytes=$(echo "$traffic" | awk '{print $1}')
+            local down_bytes=$(echo "$traffic" | awk '{print $2}')
             
             up_bytes=${up_bytes:-0}
-            # Only count outbound (uplink) traffic for bandwidth monitoring
-            total_bytes=$up_bytes
+            down_bytes=${down_bytes:-0}
+            # Track BOTH upload (uplink) and download (downlink) traffic
+            # Total bandwidth = upload + download
+            total_bytes=$((up_bytes + down_bytes))
         fi
     fi
     

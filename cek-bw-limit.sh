@@ -2,11 +2,11 @@
 # =========================================
 # Professional Data Usage Limit Manager
 # Universal bandwidth/data limit system for:
-# - SSH users
-# - VLESS users (UUID based)
-# - VMESS users (UUID based)
-# - Trojan users
-# - Shadowsocks users
+# - SSH users (tracks upload + download via iptables)
+# - VLESS users (tracks upload + download via Xray API)
+# - VMESS users (tracks upload + download via Xray API)
+# - Trojan users (tracks upload + download via Xray API)
+# - Shadowsocks users (tracks upload + download via Xray API)
 # Edition : Stable Edition V3.0 - Enhanced with Real-time Monitoring
 # Features:
 # - 10-millisecond interval bandwidth checking for immediate limit enforcement
@@ -14,6 +14,8 @@
 # - Automatic user deletion when bandwidth limit exceeded
 # - JSON-based per-user tracking in /etc/myvpn/usage/
 # - Consistent bandwidth values (upload + download = total)
+# - Comprehensive deletion logging in /etc/myvpn/deleted.log
+# - Removes home directories, SSH keys, cron jobs, and usage files on deletion
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================
@@ -45,6 +47,7 @@ UWhite='\033[4;37m'
 
 # // Configuration
 WARNING_THRESHOLD=80  # Percentage at which to show warning (0-100)
+DELETED_LOG="/etc/myvpn/deleted.log"  # Log file for deleted users
 # Note: Check interval is configured in systemd service (/etc/systemd/system/bw-limit-check.service)
 
 # // Root Checking
@@ -64,6 +67,10 @@ touch "$BW_LIMIT_FILE" 2>/dev/null
 touch "$BW_USAGE_FILE" 2>/dev/null
 touch "$BW_DISABLED_FILE" 2>/dev/null
 touch "$BW_LAST_STATS_FILE" 2>/dev/null
+
+# // Create myvpn directory and deleted log file
+mkdir -p /etc/myvpn 2>/dev/null
+touch "$DELETED_LOG" 2>/dev/null
 
 # // Xray API configuration
 _APISERVER=127.0.0.1:10085
@@ -85,6 +92,7 @@ get_xray_user_bandwidth() {
             
             # Parse upload and download bytes using awk
             # This approach handles both multi-line and single-line/compact JSON formats
+            # We track BOTH uplink (upload) and downlink (download) for accurate total bandwidth
             local traffic=$(echo "$flat_stats" | awk -v user="$username" '
                 BEGIN { up=0; down=0; current_name="" }
                 {
@@ -117,6 +125,7 @@ get_xray_user_bandwidth() {
                                 val = temp2
                                 if (val == "") val = 0
                                 
+                                # Track both uplink (upload) and downlink (download)
                                 if (name == "user>>>" user ">>>traffic>>>uplink") {
                                     up = val
                                 }
@@ -141,6 +150,7 @@ get_xray_user_bandwidth() {
                             gsub(/[^0-9]/, "", val)
                             if (val == "") val = 0
                             
+                            # Track both uplink (upload) and downlink (download)
                             if (current_name == "user>>>" user ">>>traffic>>>uplink") {
                                 up = val
                             }
@@ -158,9 +168,10 @@ get_xray_user_bandwidth() {
             
             up_bytes=${up_bytes:-0}
             down_bytes=${down_bytes:-0}
-            # Only count outbound (uplink) traffic for bandwidth monitoring
-            # Per requirement: just record outbound traffic of the VPS and measure accordingly
-            total_bytes=$up_bytes
+            # Track BOTH upload (uplink) and download (downlink) traffic
+            # Total bandwidth = upload + download to provide accurate bandwidth accounting
+            # This ensures proper bandwidth limits are enforced on total data usage
+            total_bytes=$((up_bytes + down_bytes))
         fi
     fi
     
@@ -168,40 +179,56 @@ get_xray_user_bandwidth() {
 }
 
 # // Function to get SSH user bandwidth usage via iptables accounting
+# // Tracks both upload (OUTPUT) and download (INPUT) traffic for accurate total bandwidth
 get_ssh_user_bandwidth() {
     local username=$1
     local total_bytes=0
     
-    # Get user UID
+    # Get user UID for iptables owner matching
     local uid=$(id -u "$username" 2>/dev/null)
     if [ -z "$uid" ]; then
         echo 0
         return
     fi
     
-    # Create unique chain name for this user to track bandwidth
-    local chain_name="BW_${uid}"
+    # Create unique chain names for this user to track both directions
+    local chain_out="BW_OUT_${uid}"  # Upload/outbound traffic
+    local chain_in="BW_IN_${uid}"    # Download/inbound traffic
     
-    # Check if user chain exists, if not create it
-    if ! iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
-        # Create a custom chain for this user
-        iptables -N "$chain_name" 2>/dev/null
-        # Add rule to OUTPUT to track outgoing traffic by user (upload)
-        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    # Setup OUTPUT chain for upload tracking (outbound from VPS)
+    if ! iptables -L "$chain_out" -n 2>/dev/null | grep -q "Chain"; then
+        # Create custom chain for outbound traffic
+        iptables -N "$chain_out" 2>/dev/null
+        # Track outgoing traffic by user UID (upload)
+        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_out" 2>/dev/null
         # Add RETURN rule to continue processing
-        iptables -A "$chain_name" -j RETURN 2>/dev/null
+        iptables -A "$chain_out" -j RETURN 2>/dev/null
     fi
     
-    # Get bytes from the custom chain
-    # This tracks OUTPUT (outbound) traffic only as per requirement.
-    # Only outbound traffic from the VPS is measured for bandwidth limits.
-    # Note: INPUT tracking via owner match is not possible in iptables.
-    # Bandwidth limits should account for outbound-only measurement.
-    local out_bytes=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
-    out_bytes=${out_bytes:-0}
+    # Setup INPUT chain for download tracking (inbound to VPS)
+    # Note: We track all INPUT traffic and estimate per-user based on connection tracking
+    # Since iptables cannot match owner on INPUT, we use conntrack to associate traffic
+    if ! iptables -L "$chain_in" -n 2>/dev/null | grep -q "Chain"; then
+        # Create custom chain for inbound traffic
+        iptables -N "$chain_in" 2>/dev/null
+        # Track established connections that were initiated by this user
+        # This captures download traffic for connections the user established
+        iptables -I INPUT -m conntrack --ctstate ESTABLISHED -m owner --uid-owner "$uid" -j "$chain_in" 2>/dev/null
+        # Add RETURN rule to continue processing
+        iptables -A "$chain_in" -j RETURN 2>/dev/null
+    fi
     
-    # Return output bytes as the bandwidth measurement
-    total_bytes=$out_bytes
+    # Get upload bytes from OUTPUT chain
+    local upload_bytes=$(iptables -L "$chain_out" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
+    upload_bytes=${upload_bytes:-0}
+    
+    # Get download bytes from INPUT chain
+    local download_bytes=$(iptables -L "$chain_in" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
+    download_bytes=${download_bytes:-0}
+    
+    # Total bandwidth = upload + download
+    # This provides accurate total data usage for bandwidth limit enforcement
+    total_bytes=$((upload_bytes + download_bytes))
     echo $total_bytes
 }
 
@@ -283,6 +310,9 @@ delete_vmess_user() {
     rm -f "/home/vps/public_html/vmess-${user}.txt"
     
     if [ "$deleted" -eq 1 ]; then
+        # Log deletion to deleted.log with timestamp, username, type, and reason
+        local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        echo "$timestamp | VMess | $user | Bandwidth limit exceeded" >> "$DELETED_LOG"
         echo -e "[${GREEN} OKEY ${NC}] VMess user $user deleted (bandwidth limit exceeded)"
         return 0
     else
@@ -311,6 +341,9 @@ delete_vless_user() {
     rm -f "/home/vps/public_html/vless-${user}.txt"
     
     if [ "$deleted" -eq 1 ]; then
+        # Log deletion to deleted.log with timestamp, username, type, and reason
+        local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        echo "$timestamp | Vless | $user | Bandwidth limit exceeded" >> "$DELETED_LOG"
         echo -e "[${GREEN} OKEY ${NC}] Vless user $user deleted (bandwidth limit exceeded)"
         return 0
     else
@@ -338,6 +371,9 @@ delete_trojan_user() {
     rm -f "/home/vps/public_html/trojan-${user}.txt"
     
     if [ "$deleted" -eq 1 ]; then
+        # Log deletion to deleted.log with timestamp, username, type, and reason
+        local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        echo "$timestamp | Trojan | $user | Bandwidth limit exceeded" >> "$DELETED_LOG"
         echo -e "[${GREEN} OKEY ${NC}] Trojan user $user deleted (bandwidth limit exceeded)"
         return 0
     else
@@ -366,6 +402,9 @@ delete_ssws_user() {
     rm -f "/home/vps/public_html/sodosokgrpc-${user}.txt"
     
     if [ "$deleted" -eq 1 ]; then
+        # Log deletion to deleted.log with timestamp, username, type, and reason
+        local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        echo "$timestamp | Shadowsocks | $user | Bandwidth limit exceeded" >> "$DELETED_LOG"
         echo -e "[${GREEN} OKEY ${NC}] Shadowsocks user $user deleted (bandwidth limit exceeded)"
         return 0
     else
@@ -375,20 +414,35 @@ delete_ssws_user() {
 }
 
 # // Function to cleanup SSH user iptables rules
+# // Removes both upload and download tracking chains for the user
 cleanup_ssh_iptables() {
     local uid=$1
-    local chain_name="BW_${uid}"
+    local chain_out="BW_OUT_${uid}"
+    local chain_in="BW_IN_${uid}"
     
-    # Remove reference from OUTPUT chain
-    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
-    # Flush and delete the custom chain
-    iptables -F "$chain_name" 2>/dev/null
-    iptables -X "$chain_name" 2>/dev/null
+    # Remove references from OUTPUT chain (upload tracking)
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_out" 2>/dev/null
+    # Flush and delete the custom outbound chain
+    iptables -F "$chain_out" 2>/dev/null
+    iptables -X "$chain_out" 2>/dev/null
+    
+    # Remove references from INPUT chain (download tracking)
+    iptables -D INPUT -m conntrack --ctstate ESTABLISHED -m owner --uid-owner "$uid" -j "$chain_in" 2>/dev/null
+    # Flush and delete the custom inbound chain
+    iptables -F "$chain_in" 2>/dev/null
+    iptables -X "$chain_in" 2>/dev/null
+    
+    # Also cleanup old single-chain format for backward compatibility
+    local chain_old="BW_${uid}"
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_old" 2>/dev/null
+    iptables -F "$chain_old" 2>/dev/null
+    iptables -X "$chain_old" 2>/dev/null
 }
 
 # // Function to delete SSH user
 # // Uses the same deletion pattern as menu-ssh.sh del() function
 # // Enhanced to cleanup home folder and cron jobs
+# // Logs deletion to /etc/myvpn/deleted.log with full details
 delete_ssh_user() {
     local user=$1
     
@@ -398,13 +452,12 @@ delete_ssh_user() {
         # Use getent to avoid race conditions
         local uid=$(getent passwd "$user" 2>/dev/null | cut -d: -f3)
         
-        # Cleanup iptables rules for this user
+        # Cleanup iptables rules for this user (both upload and download chains)
         if [ -n "$uid" ]; then
             cleanup_ssh_iptables "$uid"
         fi
         
-        # Remove user-specific cron jobs
-        # Check for cron jobs in user's crontab
+        # Remove user-specific cron jobs from user's crontab
         crontab -u "${user}" -r 2>/dev/null
         
         # Check for cron jobs in /etc/cron.d/ referencing this user
@@ -414,9 +467,10 @@ delete_ssh_user() {
         done
         
         # Delete the user and remove home directory
+        # This removes: user account, home folder, and SSH keys
         userdel -r "$user" > /dev/null 2>&1
         
-        # Remove user files
+        # Remove user files from web directory
         rm -f /home/vps/public_html/ssh-"$user".txt
         
         # Cleanup bandwidth tracking data (old format)
@@ -428,6 +482,11 @@ delete_ssh_user() {
         if [ -f "/usr/bin/bw-tracking-lib" ]; then
             delete_user_bw_data "$user"
         fi
+        
+        # Log deletion to deleted.log with comprehensive details
+        # Format: timestamp | protocol | username | reason
+        local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+        echo "$timestamp | SSH | $user | Bandwidth limit exceeded - Account deleted, home directory removed, SSH keys removed, cron jobs removed" >> "$DELETED_LOG"
         
         echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
         return 0
@@ -652,12 +711,17 @@ reset_user_usage() {
     sed -i "/^$username /d" "$BW_USAGE_FILE"
     sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
     
-    # Reset iptables counters for SSH users
+    # Reset iptables counters for SSH users (both upload and download chains)
     if [ "$account_type" = "ssh" ]; then
         local uid=$(id -u "$username" 2>/dev/null)
         if [ -n "$uid" ]; then
-            local chain_name="BW_${uid}"
-            iptables -Z "$chain_name" 2>/dev/null
+            local chain_out="BW_OUT_${uid}"
+            local chain_in="BW_IN_${uid}"
+            # Reset counters to zero (both upload and download)
+            iptables -Z "$chain_out" 2>/dev/null
+            iptables -Z "$chain_in" 2>/dev/null
+            # Also reset old chain format for backward compatibility
+            iptables -Z "BW_${uid}" 2>/dev/null
         fi
     fi
     

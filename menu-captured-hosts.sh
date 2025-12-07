@@ -388,6 +388,7 @@ echo -e "     ${BICyan}[${BIWhite}4${BICyan}] Remove Host     "
 echo -e "     ${BICyan}[${BIWhite}5${BICyan}] Clear All Hosts     "
 echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Turn ON Auto Capture     "
 echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Turn OFF Auto Capture     "
+echo -e "     ${BICyan}[${BIWhite}8${BICyan}] ${BIGreen}Real-time Host Monitor (10ms)${NC}"
 echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
 echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
 echo ""
@@ -401,6 +402,15 @@ case $opt in
 5) clear_hosts ;;
 6) enable_auto_capture ;;
 7) disable_auto_capture ;;
+8) 
+    # Launch real-time host monitor
+    if [ -f "/usr/bin/realtime-hosts" ]; then
+        /usr/bin/realtime-hosts
+    else
+        echo -e "${RED}Real-time host monitor not installed${NC}"
+        sleep 2
+    fi
+    ;;
 0) clear ; menu ;;
 x) exit ;;
 *) echo -e "" ; echo "Press any key to back on menu" ; sleep 1 ; menu ;;

@@ -1007,6 +1007,7 @@ data_limit_menu() {
     echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Disable User"
     echo -e "     ${BICyan}[${BIWhite}8${BICyan}] Enable User"
     echo -e "     ${BICyan}[${BIWhite}9${BICyan}] Check Bandwidth Service Status"
+    echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (10ms)${NC}"
     echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
     echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
     echo ""
@@ -1086,6 +1087,16 @@ data_limit_menu() {
             check_service_status
             echo ""
             read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        10)
+            # Launch real-time bandwidth monitor
+            if [ -f "/usr/bin/realtime-bandwidth" ]; then
+                /usr/bin/realtime-bandwidth
+            else
+                echo -e "${RED}Real-time bandwidth monitor not installed${NC}"
+                sleep 2
+            fi
             data_limit_menu
             ;;
         x|X)

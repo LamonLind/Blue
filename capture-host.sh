@@ -174,88 +174,96 @@ capture_ssh_hosts() {
 # Capture hosts from Xray access log (VLESS, VMESS, Trojan)
 # Captures: HTTP Host header, SNI (Server Name Indication), Proxy Host
 # These are the most common ways users specify custom domains in Xray protocols
+# Also captures source IP addresses for each connection
 capture_xray_hosts() {
     local XRAY_LOG="/var/log/xray/access.log"
     local XRAY_LOG2="/var/log/xray/access2.log"
     
     # Process main xray log
     if [ -f "$XRAY_LOG" ]; then
-        # Extract HTTP Host headers (various formats: host=, Host:, host:)
+        # Extract HTTP Host headers with source IPs (various formats: host=, Host:, host:)
         # The Host header is used by HTTP-based protocols to specify the target domain
-        local header_hosts
-        header_hosts=$(grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG" 2>/dev/null | sort -u)
-        for host in $header_hosts; do
+        # Parse each line to extract both host and source IP
+        tail -n 1000 "$XRAY_LOG" 2>/dev/null | while read -r line; do
+            # Extract source IP from line (typically at start or after "from")
+            local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
+            
+            # Extract Host header
+            local host=$(echo "$line" | grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}")
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Header-Host"
+                add_host "$host" "Header-Host" "$source_ip"
             fi
-        done
-        
-        # Extract SNI (Server Name Indication) - common log formats: sni=, serverName=, SNI:
-        # SNI is used in TLS handshake to specify the hostname for SSL/TLS connections
-        local sni_hosts
-        sni_hosts=$(grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG" 2>/dev/null | sort -u)
-        for host in $sni_hosts; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "SNI"
+            
+            # Extract SNI (Server Name Indication)
+            local sni=$(echo "$line" | grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}")
+            if [ -n "$sni" ] && echo "$sni" | grep -q '[a-zA-Z]'; then
+                add_host "$sni" "SNI" "$source_ip"
             fi
-        done
-        
-        # Extract Proxy Host - common log formats: proxy_host=, proxy-host=, proxyHost=, X-Forwarded-Host:
-        # Proxy headers are used when traffic goes through a reverse proxy
-        local proxy_hosts
-        proxy_hosts=$(grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG" 2>/dev/null | sort -u)
-        for host in $proxy_hosts; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Proxy-Host"
+            
+            # Extract Proxy Host
+            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}")
+            if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
+                add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
-        done
-        
-        # Extract destination domains from xray log (format: -> domain:port or accepted domain:port)
-        # This captures the actual domains users are trying to reach through the proxy
-        local dest_hosts
-        dest_hosts=$(grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" "$XRAY_LOG" 2>/dev/null | sort -u)
-        for host in $dest_hosts; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "XRAY"
+            
+            # Extract destination domains (format: -> domain:port or accepted domain:port)
+            local dest_host=$(echo "$line" | grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" | head -1)
+            if [ -n "$dest_host" ] && echo "$dest_host" | grep -q '[a-zA-Z]'; then
+                # Determine protocol from log line
+                local protocol="XRAY"
+                if echo "$line" | grep -qi "vless"; then
+                    protocol="VLESS"
+                elif echo "$line" | grep -qi "vmess"; then
+                    protocol="VMESS"
+                elif echo "$line" | grep -qi "trojan"; then
+                    protocol="Trojan"
+                elif echo "$line" | grep -qi "shadowsocks"; then
+                    protocol="Shadowsocks"
+                fi
+                add_host "$dest_host" "$protocol" "$source_ip"
             fi
         done
     fi
     
     # Process second xray log (same logic as above)
     if [ -f "$XRAY_LOG2" ]; then
-        # Extract HTTP Host headers
-        local header_hosts2
-        header_hosts2=$(grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG2" 2>/dev/null | sort -u)
-        for host in $header_hosts2; do
+        tail -n 1000 "$XRAY_LOG2" 2>/dev/null | while read -r line; do
+            # Extract source IP from line
+            local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
+            
+            # Extract Host header
+            local host=$(echo "$line" | grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}")
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Header-Host"
+                add_host "$host" "Header-Host" "$source_ip"
             fi
-        done
-        
-        # Extract SNI
-        local sni_hosts2
-        sni_hosts2=$(grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG2" 2>/dev/null | sort -u)
-        for host in $sni_hosts2; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "SNI"
+            
+            # Extract SNI
+            local sni=$(echo "$line" | grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}")
+            if [ -n "$sni" ] && echo "$sni" | grep -q '[a-zA-Z]'; then
+                add_host "$sni" "SNI" "$source_ip"
             fi
-        done
-        
-        # Extract Proxy Host
-        local proxy_hosts2
-        proxy_hosts2=$(grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG2" 2>/dev/null | sort -u)
-        for host in $proxy_hosts2; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Proxy-Host"
+            
+            # Extract Proxy Host
+            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}")
+            if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
+                add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
-        done
-        
-        # Extract destination domains
-        local dest_hosts2
-        dest_hosts2=$(grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" "$XRAY_LOG2" 2>/dev/null | sort -u)
-        for host in $dest_hosts2; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "XRAY"
+            
+            # Extract destination domains
+            local dest_host=$(echo "$line" | grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" | head -1)
+            if [ -n "$dest_host" ] && echo "$dest_host" | grep -q '[a-zA-Z]'; then
+                # Determine protocol from log line
+                local protocol="XRAY"
+                if echo "$line" | grep -qi "vless"; then
+                    protocol="VLESS"
+                elif echo "$line" | grep -qi "vmess"; then
+                    protocol="VMESS"
+                elif echo "$line" | grep -qi "trojan"; then
+                    protocol="Trojan"
+                elif echo "$line" | grep -qi "shadowsocks"; then
+                    protocol="Shadowsocks"
+                fi
+                add_host "$dest_host" "$protocol" "$source_ip"
             fi
         done
     fi
@@ -263,27 +271,28 @@ capture_xray_hosts() {
 
 # Capture hosts from nginx access log
 # Captures: Host header, X-Forwarded-Host, SNI from SSL logs
+# Also captures source IP addresses for each connection
 capture_nginx_hosts() {
     local NGINX_LOG="/var/log/nginx/access.log"
     local NGINX_ERROR_LOG="/var/log/nginx/error.log"
     
     if [ -f "$NGINX_LOG" ]; then
-        # Extract Host header from nginx logs
-        local hosts
-        hosts=$(awk -F'"' '{for(i=1;i<=NF;i++) if($i ~ /Host:/) print $i}' "$NGINX_LOG" 2>/dev/null | \
-                grep -oP 'Host:\s*\K[^\s]+' | sort -u)
-        for host in $hosts; do
+        # Parse nginx access log line by line to extract both host and source IP
+        # Nginx log format typically: IP - - [timestamp] "request" status size "referer" "user-agent"
+        tail -n 1000 "$NGINX_LOG" 2>/dev/null | while read -r line; do
+            # Extract source IP (first field in nginx access log)
+            local source_ip=$(echo "$line" | awk '{print $1}')
+            
+            # Extract Host header from request headers in log
+            local host=$(echo "$line" | grep -oiP 'Host:\s*\K[^\s"]+' | head -1)
             if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Header-Host"
+                add_host "$host" "Header-Host" "$source_ip"
             fi
-        done
-        
-        # Extract X-Forwarded-Host from nginx logs (proxy host)
-        local proxy_hosts
-        proxy_hosts=$(grep -oiP "X-Forwarded-Host:\s*\K${HOSTNAME_PATTERN}" "$NGINX_LOG" 2>/dev/null | sort -u)
-        for host in $proxy_hosts; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Proxy-Host"
+            
+            # Extract X-Forwarded-Host from log (proxy host)
+            local proxy_host=$(echo "$line" | grep -oiP "X-Forwarded-Host:\s*\K${HOSTNAME_PATTERN}")
+            if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
+                add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
         done
     fi
@@ -291,17 +300,21 @@ capture_nginx_hosts() {
     # Extract SNI from nginx error log (SSL handshake info)
     # Common nginx error log formats: "server name: example.com", "SNI=example.com", "for server name example.com"
     if [ -f "$NGINX_ERROR_LOG" ]; then
-        local sni_hosts
-        sni_hosts=$(grep -oiP "(server\s*name[=:\s]+|SNI[=:\s]+|for\s+server\s+name\s+)\K${HOSTNAME_PATTERN}" "$NGINX_ERROR_LOG" 2>/dev/null | sort -u)
-        for host in $sni_hosts; do
-            if [ -n "$host" ] && echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "SNI"
+        tail -n 1000 "$NGINX_ERROR_LOG" 2>/dev/null | while read -r line; do
+            # Extract source IP from error log line
+            local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
+            
+            # Extract SNI hostname
+            local sni_host=$(echo "$line" | grep -oiP "(server\s*name[=:\s]+|SNI[=:\s]+|for\s+server\s+name\s+)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$sni_host" ] && echo "$sni_host" | grep -q '[a-zA-Z]'; then
+                add_host "$sni_host" "SNI" "$source_ip"
             fi
         done
     fi
 }
 
-# Capture hosts from Dropbear
+# Capture hosts from Dropbear SSH connections
+# Extracts hostnames and source IPs from Dropbear connection attempts
 capture_dropbear_hosts() {
     local LOG="/var/log/auth.log"
     if [ -f "/var/log/secure" ]; then
@@ -309,11 +322,16 @@ capture_dropbear_hosts() {
     fi
     
     if [ -f "$LOG" ]; then
-        local hosts
-        hosts=$(grep -i "dropbear" "$LOG" 2>/dev/null | grep -oP 'from \K[^\s:]+' | sort -u)
-        for host in $hosts; do
-            if echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "Dropbear"
+        tail -n 1000 "$LOG" 2>/dev/null | grep -i "dropbear" | while read -r line; do
+            # Extract the connecting host/IP
+            local from_part=$(echo "$line" | grep -oP 'from \K[^\s:]+')
+            # Extract actual source IP from the line if available
+            local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
+            
+            # Check if it looks like a hostname (contains letters)
+            # Only capture if it's a domain name, not just an IP
+            if echo "$from_part" | grep -q '[a-zA-Z]'; then
+                add_host "$from_part" "Dropbear" "$source_ip"
             fi
         done
     fi

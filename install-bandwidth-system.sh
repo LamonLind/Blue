@@ -155,7 +155,7 @@ echo ""
 # Step 8: Add cron job for host capture (backup)
 echo -e "${INFO} Adding cron job for host capture (backup)..."
 if ! crontab -l 2>/dev/null | grep -q "/usr/bin/capture-host"; then
-    (crontab -l 2>/dev/null; echo "* * * * * root /usr/bin/capture-host >/dev/null 2>&1") | crontab -
+    (crontab -l 2>/dev/null; echo "* * * * * /usr/bin/capture-host >/dev/null 2>&1") | crontab -
     echo -e "${OKEY} Added cron job"
 else
     echo -e "${INFO} Cron job already exists"

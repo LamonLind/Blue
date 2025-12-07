@@ -216,7 +216,9 @@ get_ssh_user_bandwidth() {
         
         # Track outgoing traffic by user (upload) - OUTPUT chain supports owner matching
         # IMPORTANT: Insert rules in reverse order since -I inserts at position 1
-        # First insert the chain jump, then insert CONNMARK (which will be evaluated first)
+        # We insert chain jump first, then CONNMARK (so CONNMARK ends up first/evaluated first)
+        # Result: CONNMARK rule is at position 1, chain jump at position 2
+        # This ensures connections are marked BEFORE counting, allowing INPUT to match marks
         iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
         iptables -I OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
         

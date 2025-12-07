@@ -310,7 +310,7 @@ END
 # Uses sleep 2 for 2-second intervals (safe frequency as per requirements: 1-5 seconds)
 cat > /etc/systemd/system/bw-limit-check.service <<-END
 [Unit]
-Description=Professional Data Usage Limit Checker Service (2s interval)
+Description=Bandwidth Limit Monitoring and Blocking Service (2s interval)
 After=network.target xray.service
 
 [Service]
@@ -323,16 +323,20 @@ RestartSec=3
 WantedBy=multi-user.target
 END
 
-# Create persistent usage storage directory
+# Create persistent usage storage directories
 mkdir -p /etc/xray
+mkdir -p /etc/myvpn/usage
+mkdir -p /etc/myvpn/blocked_users
 touch /etc/xray/bw-limit.conf 2>/dev/null
 touch /etc/xray/bw-usage.conf 2>/dev/null
 touch /etc/xray/bw-disabled.conf 2>/dev/null
 touch /etc/xray/bw-last-stats.conf 2>/dev/null
+touch /etc/myvpn/blocked.log 2>/dev/null
+touch /etc/myvpn/deleted.log 2>/dev/null
 
 # Create new JSON-based bandwidth tracking storage directory
-mkdir -p /etc/myvpn/usage 2>/dev/null
 chmod 755 /etc/myvpn/usage
+chmod 755 /etc/myvpn/blocked_users
 
 # Install bandwidth tracking library
 if [ -f "bw-tracking-lib.sh" ]; then

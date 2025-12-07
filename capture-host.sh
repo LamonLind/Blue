@@ -4,6 +4,19 @@
 # Captures request hosts from SSH, VLESS, VMESS, and Trojan connections
 # Saves unique hosts to /etc/myvpn/hosts.log
 # Enhanced with real-time monitoring and IP capture
+# 
+# Features:
+# - Runs every 10 milliseconds via systemd service for real-time capture
+# - Captures host headers, SNI (Server Name Indication), domain names, and source IPs
+# - Prevents duplicate hosts from being stored repeatedly
+# - Stores unique hosts with timestamp and service type
+# - Excludes VPS main domain and IP from capture list
+# 
+# Storage Format: host|service|source_ip|timestamp
+# Example: example.com|SSH|192.168.1.100|2024-12-07 10:30:45
+# 
+# Author: LamonLind
+# (C) Copyright 2024
 # =========================================
 
 # // Export Color & Information
@@ -80,6 +93,11 @@ normalize_host() {
 }
 
 # Function to add host if not already in list and not main domain/IP
+# This function prevents duplicate entries and filters out internal hosts
+# Parameters:
+#   $1 - host/domain name to add
+#   $2 - service type (SSH, VMESS, VLESS, Trojan, SNI, Header-Host, Proxy-Host, etc.)
+#   $3 - source IP address of the connection
 add_host() {
     local host="$1"
     local service="$2"
@@ -101,6 +119,7 @@ add_host() {
     fi
     
     # Skip if it's the main domain or VPS IP (case-insensitive)
+    # This prevents capturing our own VPS domain/IP
     local main_domain_lower
     main_domain_lower=$(echo "$MAIN_DOMAIN" | tr '[:upper:]' '[:lower:]')
     if [ "$host" = "$main_domain_lower" ] || [ "$host" = "$VPS_IP" ]; then
@@ -108,11 +127,13 @@ add_host() {
     fi
     
     # Skip localhost and common internal addresses
+    # These are never useful for tracking user connections
     if [ "$host" = "localhost" ] || [ "$host" = "127.0.0.1" ] || [ "$host" = "::1" ]; then
         return
     fi
     
     # Check if host already exists in the file (case-insensitive check)
+    # This prevents duplicate entries and keeps the log file clean
     if ! grep -qi "^${host}|" "$HOSTS_FILE" 2>/dev/null; then
         # Format: host|service|ip|timestamp
         echo "$host|$service|${ip:-N/A}|$timestamp" >> "$HOSTS_FILE"
@@ -123,6 +144,8 @@ add_host() {
 }
 
 # Capture hosts from SSH auth log
+# Extracts hostnames and IPs from SSH connection attempts
+# This helps identify custom domains used for SSH connections
 capture_ssh_hosts() {
     local LOG="/var/log/auth.log"
     if [ -f "/var/log/secure" ]; then
@@ -140,6 +163,7 @@ capture_ssh_hosts() {
             local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
             
             # Check if it looks like a hostname (contains letters)
+            # Only capture if it's a domain name, not just an IP
             if echo "$from_part" | grep -q '[a-zA-Z]'; then
                 add_host "$from_part" "SSH" "$source_ip"
             fi
@@ -149,6 +173,7 @@ capture_ssh_hosts() {
 
 # Capture hosts from Xray access log (VLESS, VMESS, Trojan)
 # Captures: HTTP Host header, SNI (Server Name Indication), Proxy Host
+# These are the most common ways users specify custom domains in Xray protocols
 capture_xray_hosts() {
     local XRAY_LOG="/var/log/xray/access.log"
     local XRAY_LOG2="/var/log/xray/access2.log"
@@ -156,6 +181,7 @@ capture_xray_hosts() {
     # Process main xray log
     if [ -f "$XRAY_LOG" ]; then
         # Extract HTTP Host headers (various formats: host=, Host:, host:)
+        # The Host header is used by HTTP-based protocols to specify the target domain
         local header_hosts
         header_hosts=$(grep -oiP "(host[=:]\s*|Host:\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG" 2>/dev/null | sort -u)
         for host in $header_hosts; do
@@ -165,6 +191,7 @@ capture_xray_hosts() {
         done
         
         # Extract SNI (Server Name Indication) - common log formats: sni=, serverName=, SNI:
+        # SNI is used in TLS handshake to specify the hostname for SSL/TLS connections
         local sni_hosts
         sni_hosts=$(grep -oiP "(sni[=:]\s*|serverName[=:]\s*|server_name[=:]\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG" 2>/dev/null | sort -u)
         for host in $sni_hosts; do
@@ -174,6 +201,7 @@ capture_xray_hosts() {
         done
         
         # Extract Proxy Host - common log formats: proxy_host=, proxy-host=, proxyHost=, X-Forwarded-Host:
+        # Proxy headers are used when traffic goes through a reverse proxy
         local proxy_hosts
         proxy_hosts=$(grep -oiP "(proxy[_-]?[Hh]ost[=:]\s*|X-Forwarded-Host:\s*)\K${HOSTNAME_PATTERN}" "$XRAY_LOG" 2>/dev/null | sort -u)
         for host in $proxy_hosts; do
@@ -183,6 +211,7 @@ capture_xray_hosts() {
         done
         
         # Extract destination domains from xray log (format: -> domain:port or accepted domain:port)
+        # This captures the actual domains users are trying to reach through the proxy
         local dest_hosts
         dest_hosts=$(grep -oP "(->|accepted)\s*\K${HOSTNAME_PATTERN}\.[a-zA-Z]{2,}" "$XRAY_LOG" 2>/dev/null | sort -u)
         for host in $dest_hosts; do
@@ -192,7 +221,7 @@ capture_xray_hosts() {
         done
     fi
     
-    # Process second xray log
+    # Process second xray log (same logic as above)
     if [ -f "$XRAY_LOG2" ]; then
         # Extract HTTP Host headers
         local header_hosts2

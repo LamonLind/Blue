@@ -7,7 +7,13 @@
 # - VMESS users (UUID based)
 # - Trojan users
 # - Shadowsocks users
-# Edition : Stable Edition V3.0 - Enhanced
+# Edition : Stable Edition V3.0 - Enhanced with Real-time Monitoring
+# Features:
+# - 10-millisecond interval bandwidth checking for immediate limit enforcement
+# - Real-time daily/total/remaining bandwidth tracking
+# - Automatic user deletion when bandwidth limit exceeded
+# - JSON-based per-user tracking in /etc/myvpn/usage/
+# - Consistent bandwidth values (upload + download = total)
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================
@@ -440,15 +446,33 @@ check_bandwidth_limits() {
         # Skip empty lines and comments
         [[ -z "$username" || "$username" =~ ^# ]] && continue
         
-        # Skip if limit is 0 (unlimited)
-        if [ "$limit_mb" -eq 0 ] 2>/dev/null; then
-            continue
-        fi
-        
         # Get current bandwidth usage (includes baseline + current xray stats)
         # Note: get_user_bandwidth handles xray stats reset detection internally
         local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local limit_bytes=$(mb_to_bytes "$limit_mb")
+        
+        # Update JSON tracking data with current usage (for daily/total/remaining display)
+        if [ -f "/usr/bin/bw-tracking-lib" ]; then
+            # Initialize JSON file if it doesn't exist
+            get_user_bw_data "$username" >/dev/null
+            
+            # Check if daily reset is needed
+            check_daily_reset "$username"
+            
+            # Update daily and total usage in JSON tracking
+            update_bandwidth_usage "$username" "$current_usage"
+            
+            # Set the total limit if not already set
+            local stored_limit=$(get_user_bw_value "$username" "total_limit")
+            if [ "$stored_limit" -eq 0 ] && [ "$limit_mb" -gt 0 ]; then
+                update_user_bw_data "$username" "total_limit" "$limit_bytes"
+            fi
+        fi
+        
+        # Skip if limit is 0 (unlimited)
+        if [ "$limit_mb" -eq 0 ] 2>/dev/null; then
+            continue
+        fi
         
         # Check if limit exceeded
         if [ "$current_usage" -ge "$limit_bytes" ]; then

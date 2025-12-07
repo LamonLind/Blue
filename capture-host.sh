@@ -6,7 +6,7 @@
 # Enhanced with real-time monitoring and IP capture
 # 
 # Features:
-# - Runs every 10 milliseconds via systemd service for real-time capture
+# - Runs every 2 seconds via systemd service for real-time capture (safe frequency: 1-5 seconds)
 # - Captures host headers, SNI (Server Name Indication), domain names, and source IPs
 # - Prevents duplicate hosts from being stored repeatedly
 # - Stores unique hosts with timestamp and service type

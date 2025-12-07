@@ -9,13 +9,14 @@
 # - Shadowsocks users (tracks upload + download via Xray API)
 # Edition : Stable Edition V3.0 - Enhanced with Real-time Monitoring
 # Features:
-# - 10-millisecond interval bandwidth checking for immediate limit enforcement
+# - 2-second interval bandwidth checking for accurate limit enforcement (safe frequency)
 # - Real-time daily/total/remaining bandwidth tracking
-# - Automatic user deletion when bandwidth limit exceeded
+# - Automatic user deletion when bandwidth limit exceeded (including SSH accounts)
 # - JSON-based per-user tracking in /etc/myvpn/usage/
 # - Consistent bandwidth values (upload + download = total)
 # - Comprehensive deletion logging in /etc/myvpn/deleted.log
 # - Removes home directories, SSH keys, cron jobs, and usage files on deletion
+# - Lightweight and stable with minimal CPU usage
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================
@@ -181,6 +182,8 @@ get_xray_user_bandwidth() {
 # // Function to get SSH user bandwidth usage via iptables accounting
 # // Tracks both upload (OUTPUT) and download (INPUT) traffic for accurate total bandwidth
 # // Uses connection tracking and accounting to properly track bidirectional traffic per user
+# // Uses iptables (not nftables) for better compatibility across Ubuntu 20.04, 22.04, 24.04
+# // All iptables commands have error suppression (2>/dev/null) as fallback to prevent crashes
 get_ssh_user_bandwidth() {
     local username=$1
     local total_bytes=0
@@ -188,6 +191,12 @@ get_ssh_user_bandwidth() {
     # Get user UID for iptables owner matching
     local uid=$(id -u "$username" 2>/dev/null)
     if [ -z "$uid" ]; then
+        echo 0
+        return
+    fi
+    
+    # Verify iptables is available before proceeding
+    if ! command -v iptables &>/dev/null; then
         echo 0
         return
     fi
@@ -1078,7 +1087,7 @@ data_limit_menu() {
     echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Disable User"
     echo -e "     ${BICyan}[${BIWhite}8${BICyan}] Enable User"
     echo -e "     ${BICyan}[${BIWhite}9${BICyan}] Check Bandwidth Service Status"
-    echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (10ms data, 100ms display)${NC}"
+    echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (2s data, 0.1s display)${NC}"
     echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
     echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
     echo ""

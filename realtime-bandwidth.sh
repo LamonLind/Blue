@@ -1,8 +1,9 @@
 #!/bin/bash
 # =========================================
 # Real-time Bandwidth Monitor Display
-# Shows live bandwidth usage updates every 1 second
+# Shows live bandwidth usage updates with safe 2-second intervals
 # Displays daily, total, and remaining bandwidth for all users
+# Safe frequency: data collection every 2 seconds, display refresh every 0.1 seconds
 # Author: LamonLind
 # =========================================
 
@@ -64,6 +65,8 @@ mb_to_bytes() {
 # // Function to get SSH user bandwidth usage via iptables accounting
 # // Tracks both upload (OUTPUT) and download (INPUT) traffic for accurate total bandwidth
 # // Uses connection tracking and accounting to properly track bidirectional traffic per user
+# // Uses iptables (not nftables) for better compatibility across Ubuntu 20.04, 22.04, 24.04
+# // All iptables commands have error suppression (2>/dev/null) as fallback to prevent crashes
 get_ssh_user_bandwidth() {
     local username=$1
     local total_bytes=0
@@ -71,6 +74,12 @@ get_ssh_user_bandwidth() {
     # Get user UID for iptables owner matching
     local uid=$(id -u "$username" 2>/dev/null)
     if [ -z "$uid" ]; then
+        echo 0
+        return
+    fi
+    
+    # Verify iptables is available before proceeding
+    if ! command -v iptables &>/dev/null; then
         echo 0
         return
     fi

@@ -743,18 +743,21 @@ check_bandwidth_limits() {
         # Update JSON tracking data with current usage (for daily/total/remaining display)
         if [ -f "/usr/bin/bw-tracking-lib" ]; then
             # Initialize JSON file if it doesn't exist
-            get_user_bw_data "$username" >/dev/null
+            get_user_bw_data "$username" >/dev/null 2>&1
             
             # Check if daily reset is needed
-            check_daily_reset "$username"
+            check_daily_reset "$username" 2>/dev/null
             
             # Update daily and total usage in JSON tracking
-            update_bandwidth_usage "$username" "$current_usage"
+            update_bandwidth_usage "$username" "$current_usage" 2>/dev/null
             
             # Set the total limit if not already set
-            local stored_limit=$(get_user_bw_value "$username" "total_limit")
-            if [ "$stored_limit" -eq 0 ] && [ "$limit_mb" -gt 0 ]; then
-                update_user_bw_data "$username" "total_limit" "$limit_bytes"
+            local stored_limit=$(get_user_bw_value "$username" "total_limit" 2>/dev/null)
+            # Remove any non-numeric characters and ensure it's a valid integer
+            stored_limit=$(echo "$stored_limit" | tr -cd '0-9')
+            stored_limit=${stored_limit:-0}
+            if [ "$stored_limit" -eq 0 ] 2>/dev/null && [ "$limit_mb" -gt 0 ] 2>/dev/null; then
+                update_user_bw_data "$username" "total_limit" "$limit_bytes" 2>/dev/null
             fi
         fi
         

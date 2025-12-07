@@ -1,8 +1,9 @@
 #!/bin/bash
 # =========================================
 # Real-time Bandwidth Monitor Display
-# Shows live bandwidth usage updates every 1 second
+# Shows live bandwidth usage updates with safe 2-second intervals
 # Displays daily, total, and remaining bandwidth for all users
+# Safe frequency: data collection every 2 seconds, display refresh every 0.1 seconds
 # Author: LamonLind
 # =========================================
 

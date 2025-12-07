@@ -298,24 +298,24 @@ cat > /etc/cron.d/capture_host <<-END
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 # Legacy cron job for backward compatibility and fallback
-# The primary host-capture.service runs every 10ms for real-time monitoring
+# The primary host-capture.service runs every 2 seconds for real-time monitoring
 # This cron job runs every minute as a fallback in case the service fails
 # It also ensures hosts are captured even if systemd is not available
 * * * * * root /usr/bin/capture-host >/dev/null 2>&1
 END
 
-# Create systemd service for bandwidth limit checking every 10 milliseconds
-# Note: 10-millisecond interval for ultra-fast real-time bandwidth monitoring as per requirements
-# This provides the most accurate real-time tracking and immediate limit enforcement
-# Uses sleep 0.01 for 10ms intervals (0.01 seconds = 10 milliseconds)
+# Create systemd service for bandwidth limit checking with safe 2-second intervals
+# Note: 2-second interval provides accurate real-time bandwidth monitoring
+# This provides accurate tracking and immediate limit enforcement without high CPU load
+# Uses sleep 2 for 2-second intervals (safe frequency as per requirements: 1-5 seconds)
 cat > /etc/systemd/system/bw-limit-check.service <<-END
 [Unit]
-Description=Professional Data Usage Limit Checker Service (10ms interval)
+Description=Professional Data Usage Limit Checker Service (2s interval)
 After=network.target xray.service
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 0.01; done'
+ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 2; done'
 Restart=always
 RestartSec=3
 
@@ -352,18 +352,18 @@ if [ -f "realtime-hosts.sh" ]; then
     chmod +x /usr/bin/realtime-hosts
 fi
 
-# Create systemd service for real-time host capture every 10 milliseconds
-# Note: 10-millisecond interval for ultra-fast real-time host monitoring as per requirements
+# Create systemd service for real-time host capture with safe 2-second intervals
+# Note: 2-second interval for real-time host monitoring with safe frequency (1-5 seconds)
 # This captures hosts from all incoming connections continuously
-# Uses sleep 0.01 for 10ms intervals (0.01 seconds = 10 milliseconds)
+# Uses sleep 2 for 2-second intervals - lightweight and stable
 cat > /etc/systemd/system/host-capture.service <<-END
 [Unit]
-Description=Real-time Host Capture Service (10ms interval)
+Description=Real-time Host Capture Service (2s interval)
 After=network.target xray.service nginx.service
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/capture-host >/dev/null 2>&1; sleep 0.01; done'
+ExecStart=/bin/bash -c 'while true; do /usr/bin/capture-host >/dev/null 2>&1; sleep 2; done'
 Restart=always
 RestartSec=3
 

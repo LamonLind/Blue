@@ -2,8 +2,8 @@
 # =========================================
 # Real-time Host Capture Monitor Display
 # Shows live captured hosts from all connections
-# Updates display every 100 milliseconds for smooth viewing
-# Background service captures at 10ms, display refreshes at 100ms
+# Updates display with safe 2-second intervals for data collection
+# Background service captures at 2s, display refreshes at 0.1s for smooth viewing
 # Author: LamonLind
 # =========================================
 

@@ -9,13 +9,14 @@
 # - Shadowsocks users (tracks upload + download via Xray API)
 # Edition : Stable Edition V3.0 - Enhanced with Real-time Monitoring
 # Features:
-# - 10-millisecond interval bandwidth checking for immediate limit enforcement
+# - 2-second interval bandwidth checking for accurate limit enforcement (safe frequency)
 # - Real-time daily/total/remaining bandwidth tracking
-# - Automatic user deletion when bandwidth limit exceeded
+# - Automatic user deletion when bandwidth limit exceeded (including SSH accounts)
 # - JSON-based per-user tracking in /etc/myvpn/usage/
 # - Consistent bandwidth values (upload + download = total)
 # - Comprehensive deletion logging in /etc/myvpn/deleted.log
 # - Removes home directories, SSH keys, cron jobs, and usage files on deletion
+# - Lightweight and stable with minimal CPU usage
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================

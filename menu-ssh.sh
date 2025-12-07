@@ -171,7 +171,7 @@ clear
                done
                
                # Delete user with home directory removal
-               userdel -r $username
+               userdel -r $username > /dev/null 2>&1
                
                # Remove bandwidth limit and tracking entries (old format)
                sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null

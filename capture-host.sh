@@ -132,19 +132,18 @@ capture_ssh_hosts() {
     if [ -f "$LOG" ]; then
         # Extract hosts and IPs from SSH connections
         # Pattern: "from <host/ip> port <port>" or "from <host/ip>"
-        while read -r line; do
-            if echo "$line" | grep -qi "sshd.*from"; then
-                # Extract the connecting IP/host
-                local from_part=$(echo "$line" | grep -oP 'from \K[^\s:]+')
-                # Extract actual source IP from the line if available
-                local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
-                
-                # Check if it looks like a hostname (contains letters)
-                if echo "$from_part" | grep -q '[a-zA-Z]'; then
-                    add_host "$from_part" "SSH" "$source_ip"
-                fi
+        # Filter first, then take last 1000 for efficiency
+        grep -i "sshd.*from" "$LOG" 2>/dev/null | tail -1000 | while read -r line; do
+            # Extract the connecting IP/host
+            local from_part=$(echo "$line" | grep -oP 'from \K[^\s:]+')
+            # Extract actual source IP from the line if available
+            local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
+            
+            # Check if it looks like a hostname (contains letters)
+            if echo "$from_part" | grep -q '[a-zA-Z]'; then
+                add_host "$from_part" "SSH" "$source_ip"
             fi
-        done < <(tail -1000 "$LOG" 2>/dev/null | grep -i "sshd")
+        done
     fi
 }
 

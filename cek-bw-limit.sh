@@ -526,8 +526,10 @@ display_bandwidth_usage() {
             # Calculate remaining
             if [ "$limit_mb" -gt 0 ]; then
                 local limit_bytes=$(mb_to_bytes "$limit_mb")
-                remaining_mb=$(bytes_to_mb $((limit_bytes - current_usage)))
-                [ $remaining_mb -lt 0 ] && remaining_mb=0
+                # Both current_usage and limit_bytes are in bytes, subtraction is safe
+                local remaining_bytes=$((limit_bytes - current_usage))
+                [ $remaining_bytes -lt 0 ] && remaining_bytes=0
+                remaining_mb=$(bytes_to_mb "$remaining_bytes")
             else
                 remaining_mb="∞"
             fi

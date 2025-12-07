@@ -120,18 +120,15 @@ check_daily_reset() {
 # Usage: update_bandwidth_usage username bytes_used
 update_bandwidth_usage() {
     local username=$1
-    local bytes_used=$2
+    local new_bytes=$2
     
     # Check if daily reset needed
     check_daily_reset "$username"
     
-    # Get current values
-    local daily_usage=$(get_user_bw_value "$username" "daily_usage")
-    local total_usage=$(get_user_bw_value "$username" "total_usage")
-    
-    # Update with new usage
-    update_user_bw_data "$username" "daily_usage" "$bytes_used"
-    update_user_bw_data "$username" "total_usage" "$bytes_used"
+    # This function should be called with the absolute current usage, not incremental
+    # The get_user_bandwidth function returns the current total, we store it directly
+    update_user_bw_data "$username" "daily_usage" "$new_bytes"
+    update_user_bw_data "$username" "total_usage" "$new_bytes"
 }
 
 # Set user bandwidth limits

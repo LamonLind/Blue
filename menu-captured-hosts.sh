@@ -132,9 +132,11 @@ display_hosts() {
             local source_ip="N/A"
             local captured_time=""
             
-            # Check if ip_or_timestamp looks like an IP (basic validation for IPv4)
-            # Improved regex to validate IP octets are 0-255
-            if echo "$ip_or_timestamp" | grep -qE '^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'; then
+            # Define IP octet pattern for readability (0-255)
+            local octet_pattern='([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
+            
+            # Check if ip_or_timestamp looks like an IP (validates octets are 0-255)
+            if echo "$ip_or_timestamp" | grep -qE "^${octet_pattern}\.${octet_pattern}\.${octet_pattern}\.${octet_pattern}$"; then
                 # New format with IP
                 source_ip="$ip_or_timestamp"
                 captured_time="$timestamp_or_extra"

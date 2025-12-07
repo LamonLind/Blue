@@ -132,8 +132,8 @@ capture_ssh_hosts() {
     if [ -f "$LOG" ]; then
         # Extract hosts and IPs from SSH connections
         # Pattern: "from <host/ip> port <port>" or "from <host/ip>"
-        # Filter first, then take last 1000 for efficiency
-        grep -i "sshd.*from" "$LOG" 2>/dev/null | tail -1000 | while read -r line; do
+        # Use tail first for efficiency on large log files, then filter
+        tail -n 1000 "$LOG" 2>/dev/null | grep -i "sshd.*from" | while read -r line; do
             # Extract the connecting IP/host
             local from_part=$(echo "$line" | grep -oP 'from \K[^\s:]+')
             # Extract actual source IP from the line if available

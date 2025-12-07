@@ -399,12 +399,12 @@ delete_ssh_user() {
         
         # Remove user-specific cron jobs
         # Check for cron jobs in user's crontab
-        crontab -u "$user" -r 2>/dev/null
+        crontab -u "${user}" -r 2>/dev/null
         
         # Check for cron jobs in /etc/cron.d/ referencing this user
-        grep -l "\s$user\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
+        grep -l "\s${user}\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
             # Remove lines containing the username
-            sed -i "/\s$user\s/d" "$cronfile"
+            sed -i "/\s${user}\s/d" "$cronfile"
         done
         
         # Delete the user and remove home directory

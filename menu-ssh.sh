@@ -96,8 +96,8 @@ if getent passwd $Pengguna > /dev/null 2>&1; then
         
         # Remove user-specific cron jobs
         crontab -u "$Pengguna" -r 2>/dev/null
-        grep -l "\s$Pengguna\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
-            sed -i "/\s$Pengguna\s/d" "$cronfile"
+        grep -l "\s${Pengguna}\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
+            sed -i "/\s${Pengguna}\s/d" "$cronfile"
         done
         
         # Delete user and remove home directory
@@ -166,8 +166,8 @@ clear
                # Remove user cron jobs
                local clean_username="${username%% *}"
                crontab -u "$clean_username" -r 2>/dev/null
-               grep -l "\s$clean_username\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
-                   sed -i "/\s$clean_username\s/d" "$cronfile"
+               grep -l "\s${clean_username}\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
+                   sed -i "/\s${clean_username}\s/d" "$cronfile"
                done
                
                # Delete user with home directory removal

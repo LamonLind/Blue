@@ -325,6 +325,16 @@ touch /etc/xray/bw-usage.conf 2>/dev/null
 touch /etc/xray/bw-disabled.conf 2>/dev/null
 touch /etc/xray/bw-last-stats.conf 2>/dev/null
 
+# Create new JSON-based bandwidth tracking storage directory
+mkdir -p /etc/myvpn/usage 2>/dev/null
+chmod 755 /etc/myvpn/usage
+
+# Install bandwidth tracking library
+if [ -f "bw-tracking-lib.sh" ]; then
+    cp bw-tracking-lib.sh /usr/bin/bw-tracking-lib
+    chmod +x /usr/bin/bw-tracking-lib
+fi
+
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable bw-limit-check >/dev/null 2>&1
 systemctl start bw-limit-check >/dev/null 2>&1

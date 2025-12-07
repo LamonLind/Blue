@@ -69,7 +69,9 @@ export IP=$( curl -s https://ipinfo.io/ip/ )
 export NETWORK_IFACE="$(ip route show to default | awk '{print $5}')"
 
 # File containing captured hosts
-HOSTS_FILE="/etc/xray/captured-hosts.txt"
+HOSTS_FILE="/etc/myvpn/hosts.log"
+# Backward compatibility
+HOSTS_FILE_OLD="/etc/xray/captured-hosts.txt"
 
 # Get main domain
 get_main_domain() {
@@ -91,44 +93,75 @@ display_hosts() {
     MAIN_DOMAIN=$(get_main_domain)
     VPS_IP=$(get_vps_ip)
     
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
-    echo -e "\E[44;1;39m                  ⇱ CAPTURED REQUEST HOSTS ⇲                  \E[0m"
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    # Use new location, fall back to old if new doesn't exist
+    local display_file="$HOSTS_FILE"
+    if [ ! -f "$HOSTS_FILE" ] || [ ! -s "$HOSTS_FILE" ]; then
+        if [ -f "$HOSTS_FILE_OLD" ] && [ -s "$HOSTS_FILE_OLD" ]; then
+            display_file="$HOSTS_FILE_OLD"
+        fi
+    fi
+    
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "\E[44;1;39m                         ⇱ CAPTURED REQUEST HOSTS ⇲                            \E[0m"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
     echo -e ""
     echo -e " ${BICyan}VPS Main Domain:${NC} ${BIYellow}$MAIN_DOMAIN${NC}"
     echo -e " ${BICyan}VPS IP Address:${NC}  ${BIYellow}$VPS_IP${NC}"
     echo -e ""
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
     
-    if [ ! -f "$HOSTS_FILE" ] || [ ! -s "$HOSTS_FILE" ]; then
+    if [ ! -f "$display_file" ] || [ ! -s "$display_file" ]; then
         echo -e ""
         echo -e " ${BIYellow}No captured hosts found.${NC}"
         echo -e " ${BICyan}Hosts will be captured when users connect through custom hosts.${NC}"
         echo -e ""
     else
         echo -e ""
-        echo -e " ${BIWhite}HOST                          SERVICE       CAPTURED DATE${NC}"
-        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+        echo -e " ${BIWhite}HOST                          SERVICE       SOURCE IP         CAPTURED DATE${NC}"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
         
         # Read and display hosts, excluding main domain and VPS IP
         count=0
-        while IFS='|' read -r host service timestamp; do
+        while IFS='|' read -r host service ip_or_timestamp timestamp_or_extra; do
             # Skip main domain and VPS IP
             if [ "$host" = "$MAIN_DOMAIN" ] || [ "$host" = "$VPS_IP" ]; then
                 continue
             fi
             
+            # Handle both old format (host|service|timestamp) and new format (host|service|ip|timestamp)
+            local source_ip="N/A"
+            local captured_time=""
+            
+            # Define IP octet pattern for readability (0-255)
+            local octet_pattern='([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])'
+            
+            # Check if ip_or_timestamp looks like an IP (validates octets are 0-255)
+            if echo "$ip_or_timestamp" | grep -qE "^${octet_pattern}\.${octet_pattern}\.${octet_pattern}\.${octet_pattern}$"; then
+                # New format with IP
+                source_ip="$ip_or_timestamp"
+                captured_time="$timestamp_or_extra"
+            elif [[ "$ip_or_timestamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2} ]]; then
+                # Old format without IP
+                source_ip="N/A"
+                captured_time="$ip_or_timestamp"
+            else
+                # Fallback
+                source_ip="$ip_or_timestamp"
+                captured_time="$timestamp_or_extra"
+            fi
+            
             # Format output with padding
-            printf " ${BIGreen}%-28s${NC}  ${BICyan}%-12s${NC}  ${BIYellow}%s${NC}\n" "$host" "$service" "$timestamp"
+            printf " ${BIGreen}%-28s${NC}  ${BICyan}%-12s${NC}  ${BIYellow}%-16s${NC}  ${BIWhite}%s${NC}\n" \
+                "$host" "$service" "$source_ip" "$captured_time"
             ((count++))
-        done < "$HOSTS_FILE"
+        done < "$display_file"
         
         echo -e ""
-        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+        echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
         echo -e " ${BICyan}Total Captured Hosts:${NC} ${BIWhite}$count${NC}"
     fi
     
-    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
 }
 
 # Function to scan for new hosts

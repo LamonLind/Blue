@@ -7,10 +7,15 @@
 # - VMESS users (UUID based)
 # - Trojan users
 # - Shadowsocks users
-# Edition : Stable Edition V2.0
+# Edition : Stable Edition V3.0 - Enhanced
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================
+
+# // Load bandwidth tracking library for JSON-based storage
+if [ -f "/usr/bin/bw-tracking-lib" ]; then
+    source /usr/bin/bw-tracking-lib
+fi
 
 # // Export Color & Information
 export RED='\033[0;31m'
@@ -377,6 +382,7 @@ cleanup_ssh_iptables() {
 
 # // Function to delete SSH user
 # // Uses the same deletion pattern as menu-ssh.sh del() function
+# // Enhanced to cleanup home folder and cron jobs
 delete_ssh_user() {
     local user=$1
     
@@ -385,12 +391,38 @@ delete_ssh_user() {
         # Get UID before deleting user for iptables cleanup
         # Use getent to avoid race conditions
         local uid=$(getent passwd "$user" 2>/dev/null | cut -d: -f3)
+        
         # Cleanup iptables rules for this user
         if [ -n "$uid" ]; then
             cleanup_ssh_iptables "$uid"
         fi
-        userdel "$user" > /dev/null 2>&1
+        
+        # Remove user-specific cron jobs
+        # Check for cron jobs in user's crontab
+        crontab -u "${user}" -r 2>/dev/null
+        
+        # Check for cron jobs in /etc/cron.d/ referencing this user
+        grep -l "\s${user}\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
+            # Remove lines containing the username
+            sed -i "/\s${user}\s/d" "$cronfile"
+        done
+        
+        # Delete the user and remove home directory
+        userdel -r "$user" > /dev/null 2>&1
+        
+        # Remove user files
         rm -f /home/vps/public_html/ssh-"$user".txt
+        
+        # Cleanup bandwidth tracking data (old format)
+        sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
+        sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
+        sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
+        
+        # Cleanup JSON-based bandwidth tracking data (new format)
+        if [ -f "/usr/bin/bw-tracking-lib" ]; then
+            delete_user_bw_data "$user"
+        fi
+        
         echo -e "[${GREEN} OKEY ${NC}] SSH user $user deleted (bandwidth limit exceeded)"
         return 0
     else
@@ -446,6 +478,11 @@ check_bandwidth_limits() {
             sed -i "/^$username /d" "$BW_USAGE_FILE"
             sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
             
+            # Remove JSON-based tracking data (new format)
+            if [ -f "/usr/bin/bw-tracking-lib" ]; then
+                delete_user_bw_data "$username"
+            fi
+            
             ((deleted_count++))
         fi
     done < "$BW_LIMIT_FILE"
@@ -460,18 +497,52 @@ check_bandwidth_limits() {
 # // Function to display bandwidth usage
 display_bandwidth_usage() {
     clear
-    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\\E[0;41;36m                    BANDWIDTH USAGE MONITOR                    \E[0m"
-    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\\E[0;41;36m                         BANDWIDTH USAGE MONITOR                                     \E[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
-    printf "%-15s %-12s %-12s %-10s %-10s\n" "USERNAME" "USED (MB)" "LIMIT (MB)" "TYPE" "STATUS"
-    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    printf "%-12s %-10s %-10s %-10s %-10s %-8s %-10s\n" "USERNAME" "DAILY(MB)" "TOTAL(MB)" "LIMIT(MB)" "REMAIN(MB)" "TYPE" "STATUS"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     
     while IFS=' ' read -r username limit_mb account_type; do
         [[ -z "$username" || "$username" =~ ^# ]] && continue
         
+        # Get current usage
         local current_usage=$(get_user_bandwidth "$username" "$account_type")
         local current_mb=$(bytes_to_mb "$current_usage")
+        
+        # Try to get JSON-based tracking data for daily/remaining info
+        local daily_mb=0
+        local remaining_mb=0
+        
+        if [ -f "/usr/bin/bw-tracking-lib" ] && [ -f "/etc/myvpn/usage/${username}.json" ]; then
+            # Check for daily reset
+            check_daily_reset "$username"
+            
+            # Get daily usage
+            local daily_bytes=$(get_user_bw_value "$username" "daily_usage")
+            daily_mb=$(bytes_to_mb "$daily_bytes")
+            
+            # Calculate remaining
+            if [ "$limit_mb" -gt 0 ]; then
+                local limit_bytes=$(mb_to_bytes "$limit_mb")
+                # Both current_usage and limit_bytes are in bytes, subtraction is safe
+                local remaining_bytes=$((limit_bytes - current_usage))
+                [ $remaining_bytes -lt 0 ] && remaining_bytes=0
+                remaining_mb=$(bytes_to_mb "$remaining_bytes")
+            else
+                remaining_mb="∞"
+            fi
+        else
+            # Fallback: use current usage as daily (backward compatibility)
+            daily_mb=$current_mb
+            if [ "$limit_mb" -gt 0 ]; then
+                remaining_mb=$((limit_mb - current_mb))
+                [ $remaining_mb -lt 0 ] && remaining_mb=0
+            else
+                remaining_mb="∞"
+            fi
+        fi
         
         local status="OK"
         local color="${GREEN}"
@@ -486,11 +557,12 @@ display_bandwidth_usage() {
             color="${YELLOW}"
         fi
         
-        printf "%-15s %-12s %-12s %-10s ${color}%-10s${NC}\n" "$username" "$current_mb" "$limit_mb" "$account_type" "$status"
+        printf "%-12s %-10s %-10s %-10s %-10s %-8s ${color}%-10s${NC}\n" \
+            "$username" "$daily_mb" "$current_mb" "$limit_mb" "$remaining_mb" "$account_type" "$status"
     done < "$BW_LIMIT_FILE"
     
     echo ""
-    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
 # // Function to add bandwidth limit for user

@@ -93,12 +93,25 @@ if getent passwd $Pengguna > /dev/null 2>&1; then
         if [ -n "$uid" ]; then
             cleanup_ssh_iptables "$uid"
         fi
-        userdel $Pengguna > /dev/null 2>&1
+        
+        # Remove user-specific cron jobs
+        crontab -u "$Pengguna" -r 2>/dev/null
+        grep -l "\s${Pengguna}\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
+            sed -i "/\s${Pengguna}\s/d" "$cronfile"
+        done
+        
+        # Delete user and remove home directory
+        userdel -r $Pengguna > /dev/null 2>&1
         rm -f /home/vps/public_html/ssh-$Pengguna.txt
-        # Remove bandwidth limit and tracking entries
+        
+        # Remove bandwidth limit and tracking entries (old format)
         sed -i "/^$Pengguna /d" /etc/xray/bw-limit.conf 2>/dev/null
         sed -i "/^$Pengguna /d" /etc/xray/bw-usage.conf 2>/dev/null
         sed -i "/^$Pengguna /d" /etc/xray/bw-last-stats.conf 2>/dev/null
+        
+        # Remove JSON-based tracking data (new format)
+        rm -f /etc/myvpn/usage/${Pengguna}.json 2>/dev/null
+        
         echo -e "User $Pengguna was removed."
 else
         echo -e "Failure: User $Pengguna Not Exist."
@@ -150,11 +163,23 @@ clear
                if [ -n "$uid" ]; then
                    cleanup_ssh_iptables "$uid"
                fi
-               userdel $username
-               # Remove bandwidth limit and tracking entries
+               # Remove user cron jobs
+               local clean_username="${username%% *}"
+               crontab -u "$clean_username" -r 2>/dev/null
+               grep -l "\s${clean_username}\s" /etc/cron.d/* 2>/dev/null | while read cronfile; do
+                   sed -i "/\s${clean_username}\s/d" "$cronfile"
+               done
+               
+               # Delete user with home directory removal
+               userdel -r $username > /dev/null 2>&1
+               
+               # Remove bandwidth limit and tracking entries (old format)
                sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null
                sed -i "/^${username%% *} /d" /etc/xray/bw-usage.conf 2>/dev/null
                sed -i "/^${username%% *} /d" /etc/xray/bw-last-stats.conf 2>/dev/null
+               
+               # Remove JSON-based tracking data (new format)
+               rm -f /etc/myvpn/usage/${clean_username}.json 2>/dev/null
                fi
                done
                echo " "

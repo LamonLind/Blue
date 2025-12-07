@@ -2,7 +2,8 @@
 # =========================================
 # Host Capture Script
 # Captures request hosts from SSH, VLESS, VMESS, and Trojan connections
-# Saves unique hosts to /etc/xray/captured-hosts.txt
+# Saves unique hosts to /etc/myvpn/hosts.log
+# Enhanced with real-time monitoring and IP capture
 # =========================================
 
 # // Export Color & Information
@@ -26,8 +27,13 @@ if [ "${EUID}" -ne 0 ]; then
     exit 1
 fi
 
-# File to store captured hosts
-HOSTS_FILE="/etc/xray/captured-hosts.txt"
+# File to store captured hosts (new location as per requirements)
+HOSTS_FILE="/etc/myvpn/hosts.log"
+# Create directory if it doesn't exist
+mkdir -p /etc/myvpn 2>/dev/null
+
+# Backward compatibility: also maintain old location
+HOSTS_FILE_OLD="/etc/xray/captured-hosts.txt"
 
 # Hostname regex pattern for valid domain names
 # Matches: example.com, sub.example.com, etc.
@@ -57,6 +63,10 @@ get_vps_ip() {
 if [ ! -f "$HOSTS_FILE" ]; then
     touch "$HOSTS_FILE"
 fi
+# Also maintain old file for backward compatibility
+if [ ! -f "$HOSTS_FILE_OLD" ]; then
+    touch "$HOSTS_FILE_OLD"
+fi
 
 # Get main domain and IP to exclude
 MAIN_DOMAIN=$(get_main_domain)
@@ -73,6 +83,7 @@ normalize_host() {
 add_host() {
     local host="$1"
     local service="$2"
+    local ip="$3"
     local timestamp
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
     
@@ -103,8 +114,11 @@ add_host() {
     
     # Check if host already exists in the file (case-insensitive check)
     if ! grep -qi "^${host}|" "$HOSTS_FILE" 2>/dev/null; then
-        echo "$host|$service|$timestamp" >> "$HOSTS_FILE"
-        echo -e "${OKEY} Captured new host: $host ($service)"
+        # Format: host|service|ip|timestamp
+        echo "$host|$service|${ip:-N/A}|$timestamp" >> "$HOSTS_FILE"
+        # Also add to old location for backward compatibility
+        echo "$host|$service|$timestamp" >> "$HOSTS_FILE_OLD"
+        echo -e "${OKEY} Captured new host: $host ($service) from IP: ${ip:-N/A}"
     fi
 }
 
@@ -116,16 +130,21 @@ capture_ssh_hosts() {
     fi
     
     if [ -f "$LOG" ]; then
-        # Extract hosts from SSH connections (look for any non-IP connection attempts)
-        # Store results in array to avoid subshell issues
-        local hosts
-        hosts=$(grep -i "sshd" "$LOG" 2>/dev/null | grep -oP 'from \K[^\s:]+' | sort -u)
-        for host in $hosts; do
-            # Check if it looks like a hostname (contains letters)
-            if echo "$host" | grep -q '[a-zA-Z]'; then
-                add_host "$host" "SSH"
+        # Extract hosts and IPs from SSH connections
+        # Pattern: "from <host/ip> port <port>" or "from <host/ip>"
+        while read -r line; do
+            if echo "$line" | grep -qi "sshd.*from"; then
+                # Extract the connecting IP/host
+                local from_part=$(echo "$line" | grep -oP 'from \K[^\s:]+')
+                # Extract actual source IP from the line if available
+                local source_ip=$(echo "$line" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}' | head -1)
+                
+                # Check if it looks like a hostname (contains letters)
+                if echo "$from_part" | grep -q '[a-zA-Z]'; then
+                    add_host "$from_part" "SSH" "$source_ip"
+                fi
             fi
-        done
+        done < <(tail -1000 "$LOG" 2>/dev/null | grep -i "sshd")
     fi
 }
 

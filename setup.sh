@@ -297,9 +297,10 @@ END
 cat > /etc/cron.d/capture_host <<-END
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-# Note: Legacy cron job kept for backward compatibility
-# The new host-capture.service runs every 10ms for real-time monitoring
-# This cron job is a fallback that runs every minute
+# Legacy cron job for backward compatibility and fallback
+# The primary host-capture.service runs every 10ms for real-time monitoring
+# This cron job runs every minute as a fallback in case the service fails
+# It also ensures hosts are captured even if systemd is not available
 * * * * * root /usr/bin/capture-host >/dev/null 2>&1
 END
 

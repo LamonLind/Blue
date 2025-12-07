@@ -204,7 +204,7 @@ display_realtime_bandwidth() {
     clear
     
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\\E[0;41;36m                    REAL-TIME BANDWIDTH USAGE MONITOR (10ms UPDATE)                   \E[0m"
+    echo -e "\\E[0;41;36m                    REAL-TIME BANDWIDTH USAGE MONITOR (100ms Display)                \E[0m"
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     printf "%-12s %-10s %-10s %-10s %-10s %-8s %-10s\n" "USERNAME" "DAILY(MB)" "TOTAL(MB)" "LIMIT(MB)" "REMAIN(MB)" "TYPE" "STATUS"
@@ -286,12 +286,14 @@ display_realtime_bandwidth() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
-# // Main loop - update display every 10 milliseconds (0.01 seconds)
+# // Main loop - update display every 100 milliseconds (0.1 seconds)
+# // Note: Background service checks at 10ms, but display updates at 100ms
+# // This provides smooth viewing without screen flickering (10 updates/second)
 echo -e "${GREEN}Starting Real-time Bandwidth Monitor...${NC}"
-echo -e "${YELLOW}Updating every 10 milliseconds (100 updates/second). Press Ctrl+C to stop.${NC}"
+echo -e "${YELLOW}Display updating every 100ms (10 updates/second). Press Ctrl+C to stop.${NC}"
 sleep 2
 
 while true; do
     display_realtime_bandwidth
-    sleep 0.01  # 10 milliseconds = 0.01 seconds
+    sleep 0.1  # 100 milliseconds = 0.1 seconds - smooth display refresh
 done

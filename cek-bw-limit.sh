@@ -1031,7 +1031,7 @@ data_limit_menu() {
     echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Disable User"
     echo -e "     ${BICyan}[${BIWhite}8${BICyan}] Enable User"
     echo -e "     ${BICyan}[${BIWhite}9${BICyan}] Check Bandwidth Service Status"
-    echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (10ms)${NC}"
+    echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (10ms data, 100ms display)${NC}"
     echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
     echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
     echo ""

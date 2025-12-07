@@ -2,7 +2,8 @@
 # =========================================
 # Real-time Host Capture Monitor Display
 # Shows live captured hosts from all connections
-# Updates every 1 second to show new captured hosts
+# Updates display every 100 milliseconds for smooth viewing
+# Background service captures at 10ms, display refreshes at 100ms
 # Author: LamonLind
 # =========================================
 
@@ -67,7 +68,7 @@ display_realtime_hosts() {
     clear
     
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\\E[0;41;36m                   REAL-TIME HOST CAPTURE MONITOR (10ms UPDATE)                      \E[0m"
+    echo -e "\\E[0;41;36m                   REAL-TIME HOST CAPTURE MONITOR (100ms Display)                    \E[0m"
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "  Main Domain: ${BIWhite}$main_domain${NC} | VPS IP: ${BIWhite}$vps_ip${NC}"
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
@@ -119,12 +120,14 @@ display_realtime_hosts() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
-# // Main loop - update display every 10 milliseconds (0.01 seconds)
+# // Main loop - update display every 100 milliseconds (0.1 seconds)
+# // Note: Background service captures at 10ms, but display updates at 100ms
+# // This provides smooth viewing without screen flickering (10 updates/second)
 echo -e "${GREEN}Starting Real-time Host Capture Monitor...${NC}"
-echo -e "${YELLOW}Updating every 10 milliseconds (100 updates/second). Press Ctrl+C to stop.${NC}"
+echo -e "${YELLOW}Display updating every 100ms (10 updates/second). Press Ctrl+C to stop.${NC}"
 sleep 2
 
 while true; do
     display_realtime_hosts
-    sleep 0.01  # 10 milliseconds = 0.01 seconds
+    sleep 0.1  # 100 milliseconds = 0.1 seconds - smooth display refresh
 done

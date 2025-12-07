@@ -180,6 +180,7 @@ get_xray_user_bandwidth() {
 
 # // Function to get SSH user bandwidth usage via iptables accounting
 # // Tracks both upload (OUTPUT) and download (INPUT) traffic for accurate total bandwidth
+# // Uses connection tracking and accounting to properly track bidirectional traffic per user
 get_ssh_user_bandwidth() {
     local username=$1
     local total_bytes=0
@@ -191,44 +192,39 @@ get_ssh_user_bandwidth() {
         return
     fi
     
-    # Create unique chain names for this user to track both directions
-    local chain_out="BW_OUT_${uid}"  # Upload/outbound traffic
-    local chain_in="BW_IN_${uid}"    # Download/inbound traffic
+    # Create unique chain name for this user to track all traffic
+    local chain_name="BW_${uid}"
     
-    # Setup OUTPUT chain for upload tracking (outbound from VPS)
-    if ! iptables -L "$chain_out" -n 2>/dev/null | grep -q "Chain"; then
-        # Create custom chain for outbound traffic
-        iptables -N "$chain_out" 2>/dev/null
-        # Track outgoing traffic by user UID (upload)
-        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_out" 2>/dev/null
+    # Check if user chain exists, if not create it for bidirectional tracking
+    if ! iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
+        # Create a custom chain for this user to track all bidirectional traffic
+        iptables -N "$chain_name" 2>/dev/null
+        
+        # Track outgoing traffic by user (upload) - OUTPUT chain supports owner matching
+        iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+        
+        # Track incoming traffic for this user's connections (download)
+        # Use mark-based tracking: mark packets in OUTPUT, match marked connections in INPUT
+        # First, mark all outgoing packets from this user
+        iptables -A "$chain_name" -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
+        
+        # In INPUT chain, match packets belonging to connections marked by this user
+        # This captures download traffic for connections initiated by the user
+        iptables -I INPUT -m connmark --mark "$uid" -j "$chain_name" 2>/dev/null
+        
         # Add RETURN rule to continue processing
-        iptables -A "$chain_out" -j RETURN 2>/dev/null
+        iptables -A "$chain_name" -j RETURN 2>/dev/null
     fi
     
-    # Setup INPUT chain for download tracking (inbound to VPS)
-    # Note: We track all INPUT traffic and estimate per-user based on connection tracking
-    # Since iptables cannot match owner on INPUT, we use conntrack to associate traffic
-    if ! iptables -L "$chain_in" -n 2>/dev/null | grep -q "Chain"; then
-        # Create custom chain for inbound traffic
-        iptables -N "$chain_in" 2>/dev/null
-        # Track established connections that were initiated by this user
-        # This captures download traffic for connections the user established
-        iptables -I INPUT -m conntrack --ctstate ESTABLISHED -m owner --uid-owner "$uid" -j "$chain_in" 2>/dev/null
-        # Add RETURN rule to continue processing
-        iptables -A "$chain_in" -j RETURN 2>/dev/null
-    fi
+    # Get total bytes from the custom chain (both upload and download)
+    # The chain counts:
+    # 1. OUTPUT packets (upload) matched by owner
+    # 2. INPUT packets (download) matched by connmark for user's connections
+    local total=$(iptables -L "$chain_name" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
+    total=${total:-0}
     
-    # Get upload bytes from OUTPUT chain
-    local upload_bytes=$(iptables -L "$chain_out" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
-    upload_bytes=${upload_bytes:-0}
-    
-    # Get download bytes from INPUT chain
-    local download_bytes=$(iptables -L "$chain_in" -v -n -x 2>/dev/null | grep -v "^Chain\|^$\|pkts" | awk '{sum+=$2} END {print sum+0}')
-    download_bytes=${download_bytes:-0}
-    
-    # Total bandwidth = upload + download
-    # This provides accurate total data usage for bandwidth limit enforcement
-    total_bytes=$((upload_bytes + download_bytes))
+    # Return total bytes (upload + download combined)
+    total_bytes=$total
     echo $total_bytes
 }
 
@@ -414,29 +410,20 @@ delete_ssws_user() {
 }
 
 # // Function to cleanup SSH user iptables rules
-# // Removes both upload and download tracking chains for the user
+# // Removes bandwidth tracking chain and rules for the user
 cleanup_ssh_iptables() {
     local uid=$1
-    local chain_out="BW_OUT_${uid}"
-    local chain_in="BW_IN_${uid}"
+    local chain_name="BW_${uid}"
     
-    # Remove references from OUTPUT chain (upload tracking)
-    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_out" 2>/dev/null
-    # Flush and delete the custom outbound chain
-    iptables -F "$chain_out" 2>/dev/null
-    iptables -X "$chain_out" 2>/dev/null
+    # Remove reference from OUTPUT chain
+    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
     
-    # Remove references from INPUT chain (download tracking)
-    iptables -D INPUT -m conntrack --ctstate ESTABLISHED -m owner --uid-owner "$uid" -j "$chain_in" 2>/dev/null
-    # Flush and delete the custom inbound chain
-    iptables -F "$chain_in" 2>/dev/null
-    iptables -X "$chain_in" 2>/dev/null
+    # Remove reference from INPUT chain (connmark-based)
+    iptables -D INPUT -m connmark --mark "$uid" -j "$chain_name" 2>/dev/null
     
-    # Also cleanup old single-chain format for backward compatibility
-    local chain_old="BW_${uid}"
-    iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_old" 2>/dev/null
-    iptables -F "$chain_old" 2>/dev/null
-    iptables -X "$chain_old" 2>/dev/null
+    # Flush and delete the custom chain
+    iptables -F "$chain_name" 2>/dev/null
+    iptables -X "$chain_name" 2>/dev/null
 }
 
 # // Function to delete SSH user
@@ -711,17 +698,13 @@ reset_user_usage() {
     sed -i "/^$username /d" "$BW_USAGE_FILE"
     sed -i "/^$username /d" "$BW_LAST_STATS_FILE"
     
-    # Reset iptables counters for SSH users (both upload and download chains)
+    # Reset iptables counters for SSH users (single bidirectional chain)
     if [ "$account_type" = "ssh" ]; then
         local uid=$(id -u "$username" 2>/dev/null)
         if [ -n "$uid" ]; then
-            local chain_out="BW_OUT_${uid}"
-            local chain_in="BW_IN_${uid}"
-            # Reset counters to zero (both upload and download)
-            iptables -Z "$chain_out" 2>/dev/null
-            iptables -Z "$chain_in" 2>/dev/null
-            # Also reset old chain format for backward compatibility
-            iptables -Z "BW_${uid}" 2>/dev/null
+            local chain_name="BW_${uid}"
+            # Reset counters to zero
+            iptables -Z "$chain_name" 2>/dev/null
         fi
     fi
     

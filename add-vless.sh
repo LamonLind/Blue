@@ -120,6 +120,11 @@ cat > /home/vps/public_html/vless-$user.txt <<-END
 ====================================================================
 
 _______________________________________________________
+              Vless Account Information
+_______________________________________________________
+Username/Email : $user
+Expired On : $exp
+_______________________________________________________
               Link Vless Account
 _______________________________________________________
 Link TLS : vless://${uuid}@${domain}:443?type=ws&encryption=none&security=tls&host=${domain}&path=/vless&allowInsecure=1&sni=${domain}#XRAY_VLESS_TLS_${user}
@@ -147,6 +152,7 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "\E[44;1;39m        XRAY VLESS Account        \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Remarks : ${user}" | tee -a /etc/log-create-user.log
+echo -e "Email/Username : ${user}" | tee -a /etc/log-create-user.log
 echo -e "Domain : ${domain}" | tee -a /etc/log-create-user.log
 echo -e "port TLS : $tls" | tee -a /etc/log-create-user.log
 echo -e "port none TLS : $none" | tee -a /etc/log-create-user.log

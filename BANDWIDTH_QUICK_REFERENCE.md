@@ -13,6 +13,30 @@ chmod +x install-bandwidth-limiter.sh
 bandwidth-manager
 ```
 
+## How to Get Xray Emails/Usernames
+
+Each Xray protocol stores usernames in the "email" field of the configuration:
+
+```bash
+# List all VLESS users
+grep '#vls' /etc/xray/config.json | cut -d ' ' -f 2
+
+# List all VMESS users
+grep '#vms' /etc/xray/config.json | cut -d ' ' -f 2
+
+# List all Trojan users
+grep '#tr' /etc/xray/config.json | cut -d ' ' -f 2
+
+# List all Shadowsocks users
+grep '#ssw' /etc/xray/config.json | cut -d ' ' -f 2
+
+# Get user with expiry date (VLESS example)
+grep '#vls' /etc/xray/config.json | awk '{print $2, $3}'
+
+# Extract email field from config directly
+grep '"email":' /etc/xray/config.json | grep -oP '(?<="email": ")[^"]*'
+```
+
 ## Xray Quick Commands
 
 ```bash

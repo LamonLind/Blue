@@ -1319,6 +1319,7 @@ list_all_users() {
         local status="ACTIVE"
         local color="${GREEN}"
         local percentage=0
+        local limit_bytes=0
         
         # Calculate percentage first (unless unlimited)
         if [ "$limit_mb" -eq 0 ] 2>/dev/null; then
@@ -1326,7 +1327,7 @@ list_all_users() {
             percentage=0
         else
             # Calculate percentage for limited accounts
-            local limit_bytes=$(mb_to_bytes "$limit_mb")
+            limit_bytes=$(mb_to_bytes "$limit_mb")
             if [ "$limit_bytes" -gt 0 ]; then
                 percentage=$((current_usage * 100 / limit_bytes))
             fi
@@ -1338,7 +1339,7 @@ list_all_users() {
             color="${RED}"
         elif [ "$limit_mb" -eq 0 ] 2>/dev/null; then
             status="UNLIM"
-        elif [ "$current_usage" -ge "$limit_bytes" ]; then
+        elif [ "$limit_bytes" -gt 0 ] && [ "$current_usage" -ge "$limit_bytes" ]; then
             status="EXCEED"
             color="${RED}"
         elif [ "$percentage" -ge "$WARNING_THRESHOLD" ]; then

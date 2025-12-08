@@ -107,10 +107,10 @@ view_all_quotas() {
             if [ "$total_bytes" -gt 0 ]; then
                 usage_percent=$(awk "BEGIN {printf \"%.1f\", ($current_usage * 100.0) / $total_bytes}")
                 
-                # Color code based on percentage
-                if (( $(echo "$usage_percent >= 90" | bc -l) )); then
+                # Color code based on percentage using awk for portability
+                if [ $(awk "BEGIN {print ($usage_percent >= 90)}") -eq 1 ]; then
                     percent_color="${RED}"
-                elif (( $(echo "$usage_percent >= 75" | bc -l) )); then
+                elif [ $(awk "BEGIN {print ($usage_percent >= 75)}") -eq 1 ]; then
                     percent_color="${YELLOW}"
                 fi
                 

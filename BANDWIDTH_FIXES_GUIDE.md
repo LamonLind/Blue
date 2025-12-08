@@ -22,30 +22,37 @@ This fix addresses three critical bandwidth tracking issues reported in the repo
 
 **Testing**: Run `test-bandwidth-fixes.sh` to verify the fix.
 
-### 2. Xray Blocking Not Working ✅ DOCUMENTED
+### 2. Xray Blocking Not Working ✅ FIXED
 
 **Problem**: Xray accounts showed "BLOCKED" status but users still had internet access.
 
-**Root Cause**: Xray blocking uses "soft block" mechanism:
-- Creates a marker file in `/etc/myvpn/blocked_users/`
-- Updates status in JSON tracking
-- **Does NOT** prevent network connections
+**Root Cause**: Previous implementation used "soft block" (marker files only) which didn't prevent network connections.
 
-**Why Soft Block?**: 
-- Xray doesn't provide per-user network blocking capability
-- Hard blocking would require removing user from `/etc/xray/config.json` and reloading service
-- This risks config corruption if done incorrectly
-- Soft block is safer and integrates with tracking system
+**Solution Implemented (3x-ui Style Hard Blocking)**:
+- When bandwidth limit is exceeded, user is **removed from Xray config**
+- Xray service is **reloaded** to apply changes
+- Config is **backed up** before modification (timestamped backups in `/etc/xray/`)
+- User **cannot reconnect** until manually re-added or restored from backup
 
-**Solution**: Added clear warnings and documentation:
-- When blocking Xray user, shows "soft block only" warning
-- Explains that user can still connect until manually deleted
-- Provides workaround instructions
+**How Hard Blocking Works**:
+1. User exceeds bandwidth limit
+2. Script creates timestamped backup: `/etc/xray/config.json.backup.YYYYMMDD-HHMMSS`
+3. User entries are removed from `/etc/xray/config.json` using sed
+4. Xray service is reloaded: `systemctl reload xray`
+5. User is completely blocked from connecting
+6. Marker file created in `/etc/myvpn/blocked_users/` for tracking
 
-**Workaround for Hard Block**:
-1. Go to the appropriate Xray menu (VMess/VLESS/Trojan/Shadowsocks)
-2. Manually delete the user
-3. This removes them from config and prevents further connections
+**Unblocking Process**:
+- Manual re-addition via appropriate menu (menu-vmess.sh, menu-vless.sh, etc.)
+- OR restore from backup config file
+- Removes block marker file
+- User must be completely re-added to system
+
+**Safety Features**:
+- Automatic config backup before any modification
+- Error handling if service reload fails
+- Clear logging of all blocking actions
+- Preserves backup files for recovery
 
 ### 3. Xray Overcounting (40MB → 288MB) 🔧 INVESTIGATION TOOLS ADDED
 

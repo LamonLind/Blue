@@ -356,19 +356,9 @@ block_user_network() {
             fi
             ;;
         vmess|vless|trojan|ssws)
-            # Block Xray user using marker file
-            # NOTE: This is a "soft block" - user is marked as blocked in tracking system
-            # but can still technically connect through Xray until manually deleted.
-            #
-            # LIMITATION: Xray doesn't provide per-user network blocking capability.
-            # Hard blocking would require removing user from /etc/xray/config.json
-            # and reloading xray service, which risks config corruption.
-            #
-            # WORKAROUND: Monitor blocked users and manually delete them via menu system
-            # if hard network blocking is required.
-            # NOTE: Setting a low bandwidth limit (e.g., 1MB) will trigger blocking faster,
-            # but this is still a soft block - user can technically still connect even when
-            # blocked, they'll just be blocked more quickly after reconnecting.
+            # Block Xray user by removing from config (HARD BLOCK - 3x-ui style)
+            # This actually prevents the user from connecting by removing them from Xray configuration
+            # and reloading the Xray service to apply changes.
             
             local backup_dir="/etc/myvpn/blocked_users"
             mkdir -p "$backup_dir" 2>/dev/null
@@ -376,10 +366,71 @@ block_user_network() {
             # Create a marker file for this blocked user
             touch "${backup_dir}/${username}" 2>/dev/null
             
-            # Log the blocking action
-            echo -e "[${YELLOW} WARN ${NC}] Xray user $username marked as blocked (soft block only)"
-            echo -e "[${YELLOW} NOTE ${NC}] For hard block, manually delete user via menu system"
-            echo -e "[${YELLOW} NOTE ${NC}] Soft block: User is marked blocked but can still connect until deleted"
+            echo -e "[${YELLOW} INFO ${NC}] Implementing hard block for Xray user $username..."
+            
+            # Backup Xray config before modification
+            local backup_file="/etc/xray/config.json.backup.$(date +%Y%m%d-%H%M%S)"
+            cp /etc/xray/config.json "$backup_file" 2>/dev/null
+            echo -e "[${YELLOW} INFO ${NC}] Config backed up to: $backup_file"
+            
+            # Remove user from Xray config based on account type
+            local removed=0
+            case "$account_type" in
+                vmess)
+                    # Get exp to find all related entries
+                    local exp=$(grep -E "^#(vms|vmsg|vmsx) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#vms $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vmsg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vmsx $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^### $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+                vless)
+                    local exp=$(grep -E "^#(vls|vlsg|vlsx) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#vls $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vlsg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vlsx $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+                trojan)
+                    local exp=$(grep -E "^#(tr|trg) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#tr $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#trg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+                ssws)
+                    local exp=$(grep -E "^#(ssw|sswg) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#ssw $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#sswg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+            esac
+            
+            if [ "$removed" -eq 1 ]; then
+                # Reload Xray service to apply changes
+                echo -e "[${YELLOW} INFO ${NC}] Reloading Xray service to apply changes..."
+                systemctl reload xray 2>/dev/null || systemctl restart xray 2>/dev/null
+                
+                if [ $? -eq 0 ]; then
+                    echo -e "[${GREEN} OKEY ${NC}] Xray user $username HARD BLOCKED (removed from config and service reloaded)"
+                    echo -e "[${GREEN} OKEY ${NC}] User cannot connect until manually restored from backup: $backup_file"
+                else
+                    echo -e "[${RED} EROR ${NC}] Failed to reload Xray service!"
+                    echo -e "[${YELLOW} WARN ${NC}] Config changes made but service reload failed. Manual intervention required."
+                    echo -e "[${YELLOW} INFO ${NC}] Restore from backup if needed: cp $backup_file /etc/xray/config.json"
+                    return 1
+                fi
+            else
+                echo -e "[${YELLOW} WARN ${NC}] User $username not found in Xray config - already removed or doesn't exist"
+            fi
             ;;
     esac
     
@@ -405,10 +456,35 @@ unblock_user_network() {
             fi
             ;;
         vmess|vless|trojan|ssws)
-            # Remove block marker
+            # NOTE: With hard blocking, the user has been removed from Xray config
+            # Unblocking requires manually re-adding the user via the appropriate menu
+            # or restoring from the backup config file
+            
             local backup_dir="/etc/myvpn/blocked_users"
-            rm -f "${backup_dir}/${username}" 2>/dev/null
-            echo -e "[${GREEN} OKEY ${NC}] Xray user $username unblocked"
+            
+            # Check if user was blocked (marker file exists)
+            if [ -f "${backup_dir}/${username}" ]; then
+                # Find the most recent backup for this user
+                local latest_backup=$(ls -t /etc/xray/config.json.backup.* 2>/dev/null | head -1)
+                
+                # Remove block marker
+                rm -f "${backup_dir}/${username}" 2>/dev/null
+                
+                echo -e "[${YELLOW} WARN ${NC}] Xray user $username has been hard blocked (removed from config)"
+                echo -e "[${YELLOW} INFO ${NC}] To unblock, you must manually re-add the user via the appropriate menu:"
+                echo -e "[${YELLOW} INFO ${NC}]   - VMess: Use menu-vmess.sh"
+                echo -e "[${YELLOW} INFO ${NC}]   - VLESS: Use menu-vless.sh"
+                echo -e "[${YELLOW} INFO ${NC}]   - Trojan: Use menu-trojan.sh"
+                echo -e "[${YELLOW} INFO ${NC}]   - Shadowsocks: Use menu-ss.sh"
+                
+                if [ -n "$latest_backup" ]; then
+                    echo -e "[${YELLOW} INFO ${NC}] Or restore from latest backup: $latest_backup"
+                fi
+                
+                echo -e "[${GREEN} OKEY ${NC}] Block marker removed for $username"
+            else
+                echo -e "[${YELLOW} WARN ${NC}] No block marker found for $username - may not have been blocked"
+            fi
             ;;
     esac
     

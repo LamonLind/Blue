@@ -36,36 +36,57 @@ User reported three critical issues:
 
 **Result**: SSH bandwidth tracking now works correctly from the moment limit is set
 
-### 2. Xray Blocking - DOCUMENTED ✅
+### 2. Xray Blocking - HARD BLOCK IMPLEMENTED ✅
 
 **Root Cause**:
-- Xray blocking uses "soft block" mechanism (marker files only)
-- Doesn't actually prevent network connections
+- Previous "soft block" mechanism (marker files only) didn't prevent network connections
 - Xray has no built-in per-user blocking capability
 
-**Why Not Hard Block?**:
-- Would require removing user from `/etc/xray/config.json`
-- Would require reloading Xray service
-- Risks config file corruption if done incorrectly
-- Soft block is safer and integrates with tracking system
+**Hard Block Implementation (3x-ui Style)**:
+- Removes user from `/etc/xray/config.json` when limit exceeded
+- Reloads Xray service to apply changes immediately
+- Creates timestamped backup before modification
+- User completely blocked from connecting
 
 **Fix Implementation**:
-- Added clear documentation explaining soft block limitation
-- Added warning messages when blocking Xray users:
-  - "Xray user marked as blocked (soft block only)"
-  - "Soft block: User is marked blocked but can still connect until deleted"
-  - "For hard block, manually delete user via menu system"
+- Modified `block_user_network()` to remove users from config
+- Automatic config backup: `/etc/xray/config.json.backup.YYYYMMDD-HHMMSS`
+- Supports all Xray protocols: VMess, VLESS, Trojan, Shadowsocks
+- Service reload with fallback to restart if reload fails
+- Error handling and logging for all operations
 
 **Code Changes**:
-- Lines 370-395: Enhanced `block_user_network()` with documentation and warnings
+- Lines 358-437: Enhanced `block_user_network()` with hard blocking logic
+  - Backup creation before modification
+  - Config removal using sed for each protocol type
+  - Xray service reload/restart
+  - Success/failure reporting
+- Lines 458-491: Updated `unblock_user_network()` with restoration instructions
+  - Explains manual re-addition process
+  - References backup files for recovery
+  - Removes block marker files
 
-**Workaround Provided**:
-1. When user exceeds bandwidth, they're marked as blocked (soft)
-2. Admin sees blocked status in monitoring
-3. Admin manually deletes user via appropriate menu for hard block
-4. Alternative: Set very low bandwidth limits (e.g., 1MB) to trigger immediate blocking
+**Blocking Process**:
+1. User exceeds bandwidth limit
+2. Create timestamped backup of config
+3. Remove user entries from `/etc/xray/config.json`
+4. Reload Xray service (`systemctl reload xray`)
+5. Log blocking action with timestamp
+6. User cannot connect until manually restored
 
-**Result**: Users now understand blocking limitations and have clear workaround
+**Unblocking Process**:
+- Requires manual user re-addition via menu system
+- OR restore from backup config file
+- Automatic restoration not implemented to prevent accidental unblocking
+- Clear instructions provided when attempting to unblock
+
+**Safety Features**:
+- Automatic backup before every config modification
+- Error detection if service reload fails
+- Config corruption protection
+- Detailed logging of all operations
+
+**Result**: True hard blocking - users cannot connect when bandwidth limit exceeded
 
 ### 3. Xray Overcounting - DEBUG TOOLS ADDED 🔧
 

@@ -116,20 +116,27 @@ fi
 
 echo ""
 
-# Test 5: Check Xray blocking documentation improvements
-echo -e "${YELLOW}Test 5: Checking Xray blocking documentation...${NC}"
+# Test 5: Check Xray blocking implementation - HARD BLOCK
+echo -e "${YELLOW}Test 5: Checking Xray HARD blocking implementation...${NC}"
 
-if grep -qi "soft block" /home/runner/work/Blue/Blue/cek-bw-limit.sh; then
-    echo -e "${GREEN}✓${NC} Xray soft block limitation documented"
+if grep -qi "HARD BLOCK" /home/runner/work/Blue/Blue/cek-bw-limit.sh; then
+    echo -e "${GREEN}✓${NC} Xray hard block implementation found"
 else
-    echo -e "${RED}✗${NC} Xray soft block limitation NOT documented"
+    echo -e "${RED}✗${NC} Xray hard block implementation NOT found"
     exit 1
 fi
 
-if grep "soft block" /home/runner/work/Blue/Blue/cek-bw-limit.sh | grep -q "WARN\|NOTE\|YELLOW"; then
-    echo -e "${GREEN}✓${NC} Warning message included for Xray blocking"
+if grep -q "removed from config" /home/runner/work/Blue/Blue/cek-bw-limit.sh; then
+    echo -e "${GREEN}✓${NC} Config removal logic included for Xray blocking"
 else
-    echo -e "${RED}✗${NC} Warning message NOT included for Xray blocking"
+    echo -e "${RED}✗${NC} Config removal logic NOT included for Xray blocking"
+    exit 1
+fi
+
+if grep -q "systemctl reload xray\|systemctl restart xray" /home/runner/work/Blue/Blue/cek-bw-limit.sh; then
+    echo -e "${GREEN}✓${NC} Xray service reload included in blocking"
+else
+    echo -e "${RED}✗${NC} Xray service reload NOT included in blocking"
     exit 1
 fi
 
@@ -177,14 +184,15 @@ echo -e "  ${GREEN}✓${NC} SSH iptables rules are now initialized proactively"
 echo -e "  ${GREEN}✓${NC} Initialization happens on service start and when adding limits"
 echo -e "  ${GREEN}✓${NC} Debug logging system implemented"
 echo -e "  ${GREEN}✓${NC} Debug diagnostics menu added (option 13)"
-echo -e "  ${GREEN}✓${NC} Xray blocking limitations documented"
+echo -e "  ${GREEN}✓${NC} Xray HARD blocking implemented (3x-ui style)"
 echo -e "  ${GREEN}✓${NC} No syntax errors"
 echo ""
 echo -e "${YELLOW}To test in production:${NC}"
 echo -e "  1. Add a bandwidth limit to an SSH user"
 echo -e "  2. Check that iptables rules are created immediately"
-echo -e "  3. Enable debug mode and monitor logs for Xray users"
-echo -e "  4. Use menu option 13 to view debug information"
+echo -e "  3. Add bandwidth limit to Xray user and exceed it"
+echo -e "  4. Verify user is removed from config and cannot connect"
+echo -e "  5. Use menu option 13 to view debug information"
 echo ""
 
 exit 0

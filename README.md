@@ -48,6 +48,24 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
   ```html
  apt-get update && apt-get upgrade -y && apt dist-upgrade -y && update-grub && reboot
  ```
+
+## ✨ New Features
+
+### 🎯 Bandwidth Quota System (3x-ui Style)
+- **Per-user data quotas** for VLESS, VMESS, Trojan, and Shadowsocks
+- Automatic quota enforcement when limit exceeded
+- Easy quota management via command-line tools
+- Supports GB, MB, TB units
+- Real-time traffic monitoring
+- See [BANDWIDTH_QUOTA_GUIDE.md](BANDWIDTH_QUOTA_GUIDE.md) for details
+
+### 📡 Host Capture System
+- Captures all incoming hosts/domains from VPN connections
+- Tracks source IP addresses
+- Prevents duplicate entries
+- Real-time monitoring with 2-second intervals
+- See [HOST_CAPTURE_GUIDE.md](HOST_CAPTURE_GUIDE.md) for details
+
 ♦️ Installation Link <br>
 
   ```html

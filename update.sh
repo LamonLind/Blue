@@ -44,7 +44,7 @@ update_all_scripts() {
         "cek-trafik" "cek-speed" "cek-ram" "limit-speed"
         "realtime-hosts"
         "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
-        "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts"
+        "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts" "menu-bandwidth"
         "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp"
         "dns" "netf" "bbr" "backup" "restore"
         "xray-quota-manager" "xray-traffic-monitor"

@@ -142,7 +142,7 @@ update
 
 **Update Options:**
 - Update all scripts (recommended)
-- Update specific components (SSH, XRAY, Menus, Bandwidth, Utilities)
+- Update specific components (SSH, XRAY, Menus, Utilities)
 - Check for version updates
 
 ### Uninstall Script

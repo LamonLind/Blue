@@ -194,14 +194,13 @@ echo -e " ${BICyan}[${BIWhite}02${BICyan}]${RED} •${NC} ${CYAN}VMESS MENU     
 echo -e " ${BICyan}[${BIWhite}03${BICyan}]${RED} •${NC} ${CYAN}VLESS MENU      $NC  ${BICyan}[${BIWhite}14${BICyan}]${RED} • ${NC}${CYAN}CEK RUNNING SERVICE $NC"
 echo -e " ${BICyan}[${BIWhite}04${BICyan}]${RED} •${NC} ${CYAN}TROJAN MENU     $NC  ${BICyan}[${BIWhite}15${BICyan}]${RED} • ${NC}${CYAN}CEK TRAFIC $NC"
 echo -e " ${BICyan}[${BIWhite}05${BICyan}]${RED} •${NC} ${CYAN}S-SOCK MENU     $NC  ${BICyan}[${BIWhite}16${BICyan}]${RED} • ${NC}${CYAN}SPEEDTEDT  $NC"
-echo -e " ${BICyan}[${BIWhite}06${BICyan}]${RED} •${NC} ${CYAN}TENDANG         $NC  ${BICyan}[${BIWhite}17${BICyan}]${RED} • ${NC}${CYAN}CEK BANDWIDTH USE $NC"
-echo -e " ${BICyan}[${BIWhite}07${BICyan}]${RED} •${NC} ${CYAN}AUTO REBOOT     $NC  ${BICyan}[${BIWhite}18${BICyan}]${RED} • ${NC}${CYAN}LIMMIT SPEED $NC"
-echo -e " ${BICyan}[${BIWhite}08${BICyan}]${RED} •${NC} ${CYAN}REBOOT          $NC  ${BICyan}[${BIWhite}19${BICyan}]${RED} • ${NC}${CYAN}WEBMIN $NC"
-echo -e " ${BICyan}[${BIWhite}09${BICyan}]${RED} •${NC} ${CYAN}RESTART SERVICE $NC  ${BICyan}[${BIWhite}20${BICyan}]${RED} • ${NC}${CYAN}SCRIPT INFO $NC"
-echo -e " ${BICyan}[${BIWhite}10${BICyan}]${RED} •${NC} ${CYAN}BACKUP MENU     $NC  ${BICyan}[${BIWhite}21${BICyan}]${RED} • ${NC}${CYAN}CLEAR LOG $NC"
-echo -e " ${BICyan}[${BIWhite}11${BICyan}]${RED} •${NC} ${CYAN}ADD HOST        $NC  ${BICyan}[${BIWhite}22${BICyan}]${RED} • ${NC}${CYAN}FIX MISSING POINTING $NC"
-echo -e " ${BICyan}[${BIWhite}26${BICyan}]${RED} •${NC} ${CYAN}SLOWDNS MENU    $NC  ${BICyan}[${BIWhite}27${BICyan}]${RED} • ${NC}${CYAN}CAPTURED HOSTS $NC"
-echo -e " ${BICyan}[${BIWhite}28${BICyan}]${RED} •${NC} ${CYAN}BANDWIDTH MANAGER $NC"
+echo -e " ${BICyan}[${BIWhite}06${BICyan}]${RED} •${NC} ${CYAN}TENDANG         $NC  ${BICyan}[${BIWhite}18${BICyan}]${RED} • ${NC}${CYAN}LIMMIT SPEED $NC"
+echo -e " ${BICyan}[${BIWhite}07${BICyan}]${RED} •${NC} ${CYAN}AUTO REBOOT     $NC  ${BICyan}[${BIWhite}19${BICyan}]${RED} • ${NC}${CYAN}WEBMIN $NC"
+echo -e " ${BICyan}[${BIWhite}08${BICyan}]${RED} •${NC} ${CYAN}REBOOT          $NC  ${BICyan}[${BIWhite}20${BICyan}]${RED} • ${NC}${CYAN}SCRIPT INFO $NC"
+echo -e " ${BICyan}[${BIWhite}09${BICyan}]${RED} •${NC} ${CYAN}RESTART SERVICE $NC  ${BICyan}[${BIWhite}21${BICyan}]${RED} • ${NC}${CYAN}CLEAR LOG $NC"
+echo -e " ${BICyan}[${BIWhite}10${BICyan}]${RED} •${NC} ${CYAN}BACKUP MENU     $NC  ${BICyan}[${BIWhite}22${BICyan}]${RED} • ${NC}${CYAN}FIX MISSING POINTING $NC"
+echo -e " ${BICyan}[${BIWhite}11${BICyan}]${RED} •${NC} ${CYAN}ADD HOST        $NC  ${BICyan}[${BIWhite}26${BICyan}]${RED} • ${NC}${CYAN}SLOWDNS MENU $NC"
+echo -e " ${BICyan}[${BIWhite}27${BICyan}]${RED} •${NC} ${CYAN}CAPTURED HOSTS  $NC"
 echo -e " ${BICyan}[${BIWhite} X ${BICyan}] TYPE X FOR EXIT ${BICyan}${BIYellow}${BICyan}${NC}"  
 echo -e " ${RED}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
@@ -227,7 +226,6 @@ case $opt in
 14) clear ; running ;;
 15) clear ; cek-trafik ;;
 16) clear ; cek-speed ;;
-17) clear ; cek-bandwidth ;;
 #18) clear ; cek-ram ;;
 18) clear ; limit-speed ;;
 19) clear ; wbm ;;
@@ -237,7 +235,6 @@ case $opt in
 22) clear ; wget https://raw.githubusercontent.com/LamonLind/Blue/main/cf.sh && chmod +x cf.sh && ./cf.sh ;;
 26) clear ; menu-slowdns ;;
 27) clear ; menu-captured-hosts ;;
-28) clear ; /usr/bin/cek-bw-limit menu ;;
 
 0) clear ; menu ;;
 x) exit ;;

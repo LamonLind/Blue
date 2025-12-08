@@ -41,8 +41,8 @@ update_all_scripts() {
     local scripts=(
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
-        "cek-trafik" "cek-speed" "cek-bandwidth" "cek-ram" "limit-speed"
-        "cek-bw-limit" "bw-tracking-lib" "realtime-bandwidth" "realtime-hosts"
+        "cek-trafik" "cek-speed" "cek-ram" "limit-speed"
+        "realtime-hosts"
         "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts"
         "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp"
@@ -89,9 +89,8 @@ update_component() {
     echo -e "  ${CYAN}[1]${NC} SSH/WS Scripts"
     echo -e "  ${CYAN}[2]${NC} XRAY Scripts (VMESS, VLESS, Trojan, Shadowsocks)"
     echo -e "  ${CYAN}[3]${NC} Menu Scripts"
-    echo -e "  ${CYAN}[4]${NC} Bandwidth Management Scripts"
-    echo -e "  ${CYAN}[5]${NC} System Utilities"
-    echo -e "  ${CYAN}[6]${NC} Update ALL Components"
+    echo -e "  ${CYAN}[4]${NC} System Utilities"
+    echo -e "  ${CYAN}[5]${NC} Update ALL Components"
     echo -e "  ${CYAN}[0]${NC} Back to Menu"
     echo ""
     read -p "Select option: " component_choice
@@ -122,16 +121,6 @@ update_component() {
             echo -e "${GREEN}[DONE]${NC} Menu scripts updated!"
             ;;
         4)
-            echo -e "${YELLOW}[INFO]${NC} Updating bandwidth management scripts..."
-            wget -q -O /usr/bin/cek-bw-limit "https://${REPO_URL}/cek-bw-limit.sh" && chmod +x /usr/bin/cek-bw-limit
-            wget -q -O /usr/bin/bw-tracking-lib "https://${REPO_URL}/bw-tracking-lib.sh" && chmod +x /usr/bin/bw-tracking-lib
-            wget -q -O /usr/bin/realtime-bandwidth "https://${REPO_URL}/realtime-bandwidth.sh" && chmod +x /usr/bin/realtime-bandwidth
-            wget -q -O /usr/bin/realtime-hosts "https://${REPO_URL}/realtime-hosts.sh" && chmod +x /usr/bin/realtime-hosts
-            wget -q -O /usr/bin/capture-host "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/bin/capture-host
-            wget -q -O /usr/bin/cek-bandwidth "https://${REPO_URL}/cek-bandwidth.sh" && chmod +x /usr/bin/cek-bandwidth
-            echo -e "${GREEN}[DONE]${NC} Bandwidth management scripts updated!"
-            ;;
-        5)
             echo -e "${YELLOW}[INFO]${NC} Updating system utilities..."
             wget -q -O /usr/bin/restart "https://${REPO_URL}/restart.sh" && chmod +x /usr/bin/restart
             wget -q -O /usr/bin/autoreboot "https://${REPO_URL}/autoreboot.sh" && chmod +x /usr/bin/autoreboot
@@ -143,7 +132,7 @@ update_component() {
             wget -q -O /usr/bin/restore "https://${REPO_URL}/restore.sh" && chmod +x /usr/bin/restore
             echo -e "${GREEN}[DONE]${NC} System utilities updated!"
             ;;
-        6)
+        5)
             update_all_scripts
             ;;
         0)
@@ -154,7 +143,7 @@ update_component() {
             ;;
     esac
     
-    if [ "$component_choice" != "0" ] && [ "$component_choice" != "6" ]; then
+    if [ "$component_choice" != "0" ] && [ "$component_choice" != "5" ]; then
         echo ""
         echo -e "${GREEN}Component update completed!${NC}"
     fi

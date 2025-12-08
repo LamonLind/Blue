@@ -241,7 +241,6 @@ echo -e "     ${BICyan}[${BIWhite}13${BICyan}] EDIT BANNER ${BICyan}${BIYellow}$
 echo -e "     ${BICyan}[${BIWhite}14${BICyan}] RUNNING STATUS ${BICyan}${BIYellow}${BICyan}${NC}" 
 echo -e "     ${BICyan}[${BIWhite}15${BICyan}] USER BANDWIDTH ${BICyan}${BIYellow}${BICyan}${NC}" 
 echo -e "     ${BICyan}[${BIWhite}16${BICyan}] SPEEDTEST ${BICyan}${BIYellow}${BICyan}${NC}"
-echo -e "     ${BICyan}[${BIWhite}17${BICyan}] CHECK BANDWIDTH ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}18${BICyan}] LIMIT SPEED ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}19${BICyan}] WEBMIN ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}20${BICyan}] INFO SCRIPT ${BICyan}${BIYellow}${BICyan}${NC}" 
@@ -252,7 +251,6 @@ echo -e "     ${BICyan}[${BIWhite}24${BICyan}] NETFLIX CHECKER ${BICyan}${BIYell
 echo -e "     ${BICyan}[${BIWhite}25${BICyan}] TENDANG ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}26${BICyan}] SLOWDNS MENU ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}27${BICyan}] CAPTURED HOSTS ${BICyan}${BIYellow}${BICyan}${NC}"
-echo -e "     ${BICyan}[${BIWhite}28${BICyan}] DATA LIMIT MENU ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}29${BICyan}] UPDATE SCRIPT ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}30${BICyan}] UNINSTALL SCRIPT ${BICyan}${BIYellow}${BICyan}${NC}"
 #echo -e "     ${BICyan}[${BIWhite}25${BICyan}] DELETE XRAYS USER [${BIWhite} $xrays users ${BICyan}] ${BICyan}${BIYellow}${BICyan}${NC}"
@@ -288,7 +286,6 @@ case $opt in
 14) clear ; running ;;
 15) clear ; cek-trafik ;;
 16) clear ; cek-speed ;;
-17) clear ; cek-bandwidth ;;
 18) clear ; limit-speed ;;
 19) clear ; wbm ;;
 20) clear ; cat /root/log-install.txt ;;
@@ -299,7 +296,6 @@ case $opt in
 25) clear ; tendang ;;
 26) clear ; menu-slowdns ;;
 27) clear ; menu-captured-hosts ;;
-28) clear ; cek-bw-limit menu ;;
 29) clear ; update ;;
 30) clear ; uninstall ;;
 55) clear ; wget -q -O /usr/bin/xraychanger "https://raw.githubusercontent.com/LamonLind/Xcore-custompath/main/xraychanger.sh" && chmod +x /usr/bin/xraychanger && xraychanger ;;

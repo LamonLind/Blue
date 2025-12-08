@@ -187,12 +187,8 @@ wget -q -O /usr/bin/clearlog "https://raw.githubusercontent.com/LamonLind/Blue/m
 wget -q -O /usr/bin/running "https://raw.githubusercontent.com/LamonLind/Blue/main/running.sh"
 wget -q -O /usr/bin/cek-trafik "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-trafik.sh"
 wget -q -O /usr/bin/cek-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/speedtes_cli.py"
-wget -q -O /usr/bin/cek-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bandwidth.sh"
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
-wget -q -O /usr/bin/cek-bw-limit "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bw-limit.sh"
-wget -q -O /usr/bin/bw-tracking-lib "https://raw.githubusercontent.com/LamonLind/Blue/main/bw-tracking-lib.sh"
-wget -q -O /usr/bin/realtime-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/realtime-bandwidth.sh"
 wget -q -O /usr/bin/realtime-hosts "https://raw.githubusercontent.com/LamonLind/Blue/main/realtime-hosts.sh"
 wget -q -O /usr/bin/menu-vless "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vless.sh"
 wget -q -O /usr/bin/menu-vmess "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vmess.sh"
@@ -233,12 +229,8 @@ chmod +x /usr/bin/clearlog
 chmod +x /usr/bin/running
 chmod +x /usr/bin/cek-trafik
 chmod +x /usr/bin/cek-speed
-chmod +x /usr/bin/cek-bandwidth
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
-chmod +x /usr/bin/cek-bw-limit
-chmod +x /usr/bin/bw-tracking-lib
-chmod +x /usr/bin/realtime-bandwidth
 chmod +x /usr/bin/realtime-hosts
 chmod +x /usr/bin/menu-vless
 chmod +x /usr/bin/menu-vmess
@@ -312,42 +304,16 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 * * * * * root /usr/bin/capture-host >/dev/null 2>&1
 END
 
-# Create systemd service for bandwidth limit checking with safe 2-second intervals
-# Note: 2-second interval provides accurate real-time bandwidth monitoring
-# This provides accurate tracking and immediate limit enforcement without high CPU load
-# Uses sleep 2 for 2-second intervals (safe frequency as per requirements: 1-5 seconds)
-cat > /etc/systemd/system/bw-limit-check.service <<-END
-[Unit]
-Description=Bandwidth Limit Monitoring and Blocking Service (2s interval)
-After=network.target xray.service
-
-[Service]
-Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 2; done'
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-END
-
-# Create persistent usage storage directories
+# Create persistent storage directories
 mkdir -p /etc/xray
 mkdir -p /etc/myvpn/usage
 mkdir -p /etc/myvpn/blocked_users
-touch /etc/xray/bw-limit.conf 2>/dev/null
-touch /etc/xray/bw-usage.conf 2>/dev/null
-touch /etc/xray/bw-disabled.conf 2>/dev/null
-touch /etc/xray/bw-last-stats.conf 2>/dev/null
 touch /etc/myvpn/blocked.log 2>/dev/null
 touch /etc/myvpn/deleted.log 2>/dev/null
 
-# Create new JSON-based bandwidth tracking storage directory
+# Create new JSON-based storage directory
 chmod 755 /etc/myvpn/usage
 chmod 755 /etc/myvpn/blocked_users
-
-# Note: Bandwidth tracking library, realtime-bandwidth, and realtime-hosts
-# are now downloaded via wget commands above (lines 194-196)
 
 # Create systemd service for real-time host capture with safe 2-second intervals
 # Note: 2-second interval for real-time host monitoring with safe frequency (1-5 seconds)
@@ -369,8 +335,6 @@ WantedBy=multi-user.target
 END
 
 systemctl daemon-reload >/dev/null 2>&1
-systemctl enable bw-limit-check >/dev/null 2>&1
-systemctl start bw-limit-check >/dev/null 2>&1
 systemctl enable host-capture >/dev/null 2>&1
 systemctl start host-capture >/dev/null 2>&1
 

@@ -227,7 +227,6 @@ case $opt in
 14) clear ; running ;;
 15) clear ; cek-trafik ;;
 16) clear ; cek-speed ;;
-17) clear ; cek-bandwidth ;;
 #18) clear ; cek-ram ;;
 18) clear ; limit-speed ;;
 19) clear ; wbm ;;
@@ -237,7 +236,6 @@ case $opt in
 22) clear ; wget https://raw.githubusercontent.com/LamonLind/Blue/main/cf.sh && chmod +x cf.sh && ./cf.sh ;;
 26) clear ; menu-slowdns ;;
 27) clear ; menu-captured-hosts ;;
-28) clear ; /usr/bin/cek-bw-limit menu ;;
 
 0) clear ; menu ;;
 x) exit ;;

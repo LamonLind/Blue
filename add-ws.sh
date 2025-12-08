@@ -332,12 +332,6 @@ echo -e "Link Vmess Config : http://${domain}:81/vmess-$user.txt" | tee -a /etc/
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-echo -e "Bandwidth Limit : ${bw_limit} MB" | tee -a /etc/log-create-user.log
-else
-echo -e "Bandwidth Limit : Unlimited" | tee -a /etc/log-create-user.log
-fi
-echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo "" | tee -a /etc/log-create-user.log
 rm /etc/xray/$user-tls.json > /dev/null 2>&1
 rm /etc/xray/$user-none.json > /dev/null 2>&1

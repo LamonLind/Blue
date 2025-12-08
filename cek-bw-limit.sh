@@ -333,13 +333,16 @@ block_user_network() {
             ;;
         vmess|vless|trojan|ssws)
             # Block Xray user using marker file
-            # NOTE: This is a "soft block" - user is marked as blocked in tracking
-            # but can still technically connect until fully removed from Xray config.
-            # For complete blocking, user should be deleted via the menu system.
+            # NOTE: This is a "soft block" - user is marked as blocked in tracking system
+            # but can still technically connect through Xray until manually deleted.
             #
-            # A "hard block" would require removing user from /etc/xray/config.json
-            # and reloading xray service, but this risks config corruption if done incorrectly.
-            # The marker file approach is safer and integrates with the bandwidth tracking system.
+            # LIMITATION: Xray doesn't provide per-user network blocking capability.
+            # Hard blocking would require removing user from /etc/xray/config.json
+            # and reloading xray service, which risks config corruption.
+            #
+            # WORKAROUND: Monitor blocked users and manually delete them via menu system
+            # if hard network blocking is required.
+            # OR: Set bandwidth limit very low (e.g., 1MB) to trigger immediate blocking.
             
             local backup_dir="/etc/myvpn/blocked_users"
             mkdir -p "$backup_dir" 2>/dev/null
@@ -348,8 +351,9 @@ block_user_network() {
             touch "${backup_dir}/${username}" 2>/dev/null
             
             # Log the blocking action
-            echo -e "[${GREEN} OKEY ${NC}] Xray user $username marked as blocked (soft block)"
-            echo -e "[${YELLOW} NOTE ${NC}] For hard block, remove user via menu system"
+            echo -e "[${YELLOW} WARN ${NC}] Xray user $username marked as blocked (soft block only)"
+            echo -e "[${YELLOW} NOTE ${NC}] For hard block, manually delete user via menu system"
+            echo -e "[${YELLOW} NOTE ${NC}] Soft block: User is marked blocked but can still connect until deleted"
             ;;
     esac
     
@@ -735,6 +739,14 @@ delete_ssh_user() {
 check_bandwidth_limits() {
     local blocked_count=0
     
+    # On first run, initialize iptables rules for all SSH users
+    # Use a marker file to track if initialization has been done
+    local init_marker="/var/run/bw-limit-ssh-initialized"
+    if [ ! -f "$init_marker" ]; then
+        initialize_all_ssh_iptables
+        touch "$init_marker" 2>/dev/null
+    fi
+    
     # Read bandwidth limits file
     while IFS=' ' read -r username limit_mb account_type; do
         # Skip empty lines and comments
@@ -892,6 +904,71 @@ display_bandwidth_usage() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
+# // Function to initialize all SSH iptables rules for users in bw-limit.conf
+# // This should be called when the monitoring service starts
+initialize_all_ssh_iptables() {
+    echo -e "[${YELLOW} INFO ${NC}] Initializing iptables rules for SSH users..."
+    local count=0
+    
+    while IFS=' ' read -r username limit_mb account_type; do
+        [[ -z "$username" || "$username" =~ ^# ]] && continue
+        
+        if [ "$account_type" = "ssh" ]; then
+            if initialize_ssh_iptables "$username" 2>/dev/null; then
+                ((count++))
+            fi
+        fi
+    done < "$BW_LIMIT_FILE"
+    
+    if [ "$count" -gt 0 ]; then
+        echo -e "[${GREEN} OKEY ${NC}] Initialized iptables rules for $count SSH user(s)"
+    fi
+}
+
+# // Function to initialize SSH iptables rules for bandwidth tracking
+# // This should be called when adding a bandwidth limit for SSH users
+# // to ensure rules are created proactively instead of waiting for first query
+initialize_ssh_iptables() {
+    local username=$1
+    
+    # Get user UID
+    local uid=$(id -u "$username" 2>/dev/null)
+    if [ -z "$uid" ]; then
+        echo -e "[${YELLOW} WARN ${NC}] Cannot get UID for SSH user $username"
+        return 1
+    fi
+    
+    # Verify iptables is available
+    if ! command -v iptables &>/dev/null; then
+        echo -e "[${YELLOW} WARN ${NC}] iptables not available"
+        return 1
+    fi
+    
+    local chain_name="BW_${uid}"
+    
+    # Check if chain already exists
+    if iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
+        echo -e "[${YELLOW} INFO ${NC}] iptables rules already exist for $username (UID: $uid)"
+        return 0
+    fi
+    
+    # Create bandwidth tracking chain and rules
+    echo -e "[${YELLOW} INFO ${NC}] Creating iptables rules for SSH user $username (UID: $uid)"
+    
+    # Create custom chain
+    iptables -N "$chain_name" 2>/dev/null
+    
+    # Set up tracking rules (same as in get_ssh_user_bandwidth)
+    # Insert in reverse order so CONNMARK ends up first
+    iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    iptables -I OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
+    iptables -I INPUT -m connmark --mark "$uid" -j "$chain_name" 2>/dev/null
+    iptables -A "$chain_name" -j RETURN 2>/dev/null
+    
+    echo -e "[${GREEN} OKEY ${NC}] iptables rules created for $username"
+    return 0
+}
+
 # // Function to add bandwidth limit for user
 add_bandwidth_limit() {
     local username=$1
@@ -904,6 +981,11 @@ add_bandwidth_limit() {
     # Add new entry
     echo "$username $limit_mb $account_type" >> "$BW_LIMIT_FILE"
     echo -e "[${GREEN} OKEY ${NC}] Bandwidth limit set: $username = $limit_mb MB ($account_type)"
+    
+    # Initialize iptables rules for SSH users proactively
+    if [ "$account_type" = "ssh" ]; then
+        initialize_ssh_iptables "$username"
+    fi
 }
 
 # // Function to save current usage to persistent storage

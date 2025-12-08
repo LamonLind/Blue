@@ -82,7 +82,9 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
 ✅ AUTOMATIC VPS REBOOT <br>
 ✅ BACKUP & RESTORE <br>
 ✅ XRAYCORE CHANGER <br>
-✅ VIRTUAL SWAPRAM <br></br>
+✅ VIRTUAL SWAPRAM <br>
+✅ UPDATE SCRIPT (Component-based updates) <br>
+✅ UNINSTALL SCRIPT (Complete removal) <br></br>
 
 
 ```
@@ -125,4 +127,39 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
    - Admin Control
    - Restore Data
    - Full Orders For Various Services
+```
+
+## Update & Uninstall Features
+
+### Update Script
+Update individual components or all scripts without full reinstallation:
+```bash
+# From command line
+update
+
+# Or from menu, select option 29
+```
+
+**Update Options:**
+- Update all scripts (recommended)
+- Update specific components (SSH, XRAY, Menus, Bandwidth, Utilities)
+- Check for version updates
+
+### Uninstall Script
+Completely remove Blue VPN Script from your system:
+```bash
+# From command line
+uninstall
+
+# Or from menu, select option 30
+```
+
+**Features:**
+- Complete removal of all components
+- Automatic backup before removal
+- Safe confirmation required
+- Service cleanup and firewall reset
+
+📖 **For detailed documentation, see [UPDATE_UNINSTALL_GUIDE.md](UPDATE_UNINSTALL_GUIDE.md)**
+
 ```

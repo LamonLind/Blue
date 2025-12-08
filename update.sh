@@ -47,6 +47,7 @@ update_all_scripts() {
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts"
         "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp"
         "dns" "netf" "bbr" "backup" "restore"
+        "xray-quota-manager" "xray-traffic-monitor"
     )
     
     local success_count=0
@@ -61,6 +62,8 @@ update_all_scripts() {
             filename="menu4.sh"
         elif [ "$script" == "cek-speed" ]; then
             filename="speedtest_cli.py"
+        elif [ "$script" == "xray-quota-manager" ] || [ "$script" == "xray-traffic-monitor" ]; then
+            filename="${script}"
         fi
         
         if wget -q -O "/usr/bin/${script}" "https://${REPO_URL}/${filename}"; then
@@ -130,6 +133,15 @@ update_component() {
             wget -q -O /usr/bin/xp "https://${REPO_URL}/xp.sh" && chmod +x /usr/bin/xp
             wget -q -O /usr/bin/backup "https://${REPO_URL}/backup.sh" && chmod +x /usr/bin/backup
             wget -q -O /usr/bin/restore "https://${REPO_URL}/restore.sh" && chmod +x /usr/bin/restore
+            wget -q -O /usr/bin/xray-quota-manager "https://${REPO_URL}/xray-quota-manager" && chmod +x /usr/bin/xray-quota-manager
+            wget -q -O /usr/bin/xray-traffic-monitor "https://${REPO_URL}/xray-traffic-monitor" && chmod +x /usr/bin/xray-traffic-monitor
+            wget -q -O /usr/bin/capture-host "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/bin/capture-host
+            wget -q -O /usr/bin/realtime-hosts "https://${REPO_URL}/realtime-hosts.sh" && chmod +x /usr/bin/realtime-hosts
+            wget -q -O /usr/bin/menu-captured-hosts "https://${REPO_URL}/menu-captured-hosts.sh" && chmod +x /usr/bin/menu-captured-hosts
+            # Restart services to apply updates
+            systemctl daemon-reload
+            systemctl restart host-capture 2>/dev/null
+            systemctl restart xray-quota-monitor 2>/dev/null
             echo -e "${GREEN}[DONE]${NC} System utilities updated!"
             ;;
         5)

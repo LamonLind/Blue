@@ -101,6 +101,70 @@ has_quota() {
     grep -q "^$email|" "$QUOTA_CONF" 2>/dev/null
 }
 
+# Get user traffic from xray stats API
+get_user_traffic() {
+    local email="$1"
+    local uplink=0
+    local downlink=0
+    
+    # Query xray stats API
+    if command -v xray &> /dev/null; then
+        # Get uplink (upload)
+        uplink=$(xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | grep -oE '"value":"[0-9]+"' | grep -oE '[0-9]+' | head -1)
+        [ -z "$uplink" ] && uplink=0
+        
+        # Get downlink (download)
+        downlink=$(xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | grep -oE '"value":"[0-9]+"' | grep -oE '[0-9]+' | head -1)
+        [ -z "$downlink" ] && downlink=0
+    fi
+    
+    # Return total (Up + Down)
+    echo $((uplink + downlink))
+}
+
+# Show usage for a specific user
+show_usage() {
+    local email="$1"
+    
+    # Get quota
+    local quota=$(get_quota "$email")
+    local quota_status=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f3)
+    
+    # Get current usage
+    local current_usage=$(get_user_traffic "$email")
+    
+    echo -e "${BLUE}=== Bandwidth Usage for $email ===${NC}"
+    echo ""
+    
+    if [ "$quota" -eq 0 ]; then
+        echo -e "Quota Limit    : ${GREEN}Unlimited${NC}"
+        echo -e "Current Usage  : $(bytes_to_human $current_usage)"
+        echo -e "Status         : ${GREEN}Active${NC}"
+    else
+        local usage_percent=0
+        if [ "$quota" -gt 0 ]; then
+            usage_percent=$(awk "BEGIN {printf \"%.1f\", ($current_usage * 100.0) / $quota}")
+        fi
+        
+        echo -e "Quota Limit    : $(bytes_to_human $quota)"
+        echo -e "Current Usage  : $(bytes_to_human $current_usage)"
+        echo -e "Usage Percent  : ${usage_percent}%"
+        
+        if [ "$quota_status" = "true" ]; then
+            if [ "$current_usage" -ge "$quota" ]; then
+                echo -e "Status         : ${RED}Quota Exceeded (will be disabled)${NC}"
+            else
+                local remaining=$((quota - current_usage))
+                echo -e "Remaining      : $(bytes_to_human $remaining)"
+                echo -e "Status         : ${GREEN}Active${NC}"
+            fi
+        else
+            echo -e "Status         : ${RED}Disabled (quota exceeded)${NC}"
+        fi
+    fi
+    echo ""
+}
+
 # List all quotas (like 3x-ui client list)
 list_quotas() {
     echo -e "${BLUE}=== Client Bandwidth Quotas ===${NC}\n"
@@ -110,14 +174,22 @@ list_quotas() {
         return
     fi
     
-    printf "%-25s %-20s %-10s\n" "Email" "Total Quota" "Status"
-    printf "%-25s %-20s %-10s\n" "-----" "-----------" "------"
+    printf "%-25s %-15s %-15s %-10s %-10s\n" "Email" "Quota" "Usage" "Percent" "Status"
+    printf "%-25s %-15s %-15s %-10s %-10s\n" "-----" "-----" "-----" "-------" "------"
     
     while IFS='|' read -r email total_bytes enabled; do
         [ -z "$email" ] && continue
         
         local total_human=$(bytes_to_human $total_bytes)
-        printf "%-25s %-20s %-10s\n" "$email" "$total_human" "$enabled"
+        local current_usage=$(get_user_traffic "$email")
+        local usage_human=$(bytes_to_human $current_usage)
+        
+        local usage_percent="N/A"
+        if [ "$total_bytes" -gt 0 ]; then
+            usage_percent=$(awk "BEGIN {printf \"%.1f%%\", ($current_usage * 100.0) / $total_bytes}")
+        fi
+        
+        printf "%-25s %-15s %-15s %-10s %-10s\n" "$email" "$total_human" "$usage_human" "$usage_percent" "$enabled"
     done < "$QUOTA_CONF"
 }
 
@@ -157,6 +229,14 @@ case "$1" in
         list_quotas
         ;;
     
+    usage)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 usage <email>${NC}"
+            exit 1
+        fi
+        show_usage "$2"
+        ;;
+    
     *)
         echo -e "${BLUE}Xray Quota Manager (3x-ui style)${NC}"
         echo -e "\nUsage: $0 <command> [options]"
@@ -164,9 +244,11 @@ case "$1" in
         echo -e "  set <email> <quota>   - Set quota (e.g., 10GB, 500MB, 1TB)"
         echo -e "  remove <email>        - Remove quota"
         echo -e "  get <email>           - Get quota for user"
-        echo -e "  list                  - List all quotas"
+        echo -e "  usage <email>         - Show current bandwidth usage"
+        echo -e "  list                  - List all quotas with usage"
         echo -e "\nExamples:"
         echo -e "  $0 set user@test.com 10GB"
+        echo -e "  $0 usage user@test.com"
         echo -e "  $0 list"
         exit 1
         ;;

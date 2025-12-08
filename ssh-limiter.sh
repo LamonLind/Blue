@@ -277,10 +277,15 @@ apply_bandwidth_limit() {
     # Use tc (traffic control) with HTB (Hierarchical Token Bucket) for bandwidth shaping
     # This provides kernel-level bandwidth limiting
     
-    # Get default interface
+    # Get default interface with better detection
     local iface=$(ip route | grep default | awk '{print $5}' | head -1)
     if [ -z "$iface" ]; then
-        iface="eth0"
+        # Try alternative detection methods
+        iface=$(ip -o link show | grep -v "lo:" | awk -F': ' '{print $2}' | head -1)
+    fi
+    if [ -z "$iface" ]; then
+        log_msg "ERROR" "Cannot detect network interface"
+        return 1
     fi
     
     # Convert kbps to kbit for tc
@@ -563,7 +568,8 @@ check_and_enforce_limits() {
     done < "$USAGE_DB"
 }
 
-monitor_daemon() {
+# Internal daemon loop (called with _daemon_loop argument)
+_run_daemon_loop() {
     log_msg "INFO" "Starting SSH bandwidth monitoring daemon (interval: ${MONITOR_INTERVAL}s)"
     
     # Write PID file
@@ -584,8 +590,8 @@ start_monitoring() {
         fi
     fi
     
-    # Start daemon in background
-    nohup bash -c "$(declare -f monitor_daemon check_and_enforce_limits get_user_traffic_bytes bytes_to_mb mb_to_bytes get_user_quota get_user_limit get_stored_usage get_user_state update_user_record apply_bandwidth_limit create_user_cgroup assign_process_to_cgroup log_msg); monitor_daemon" > /dev/null 2>&1 &
+    # Start daemon in background by re-executing this script
+    nohup "$0" _daemon_loop > /dev/null 2>&1 &
     
     local daemon_pid=$!
     echo "$daemon_pid" > "$PID_FILE"
@@ -926,6 +932,10 @@ case "${1:-}" in
         ;;
     start-monitor)
         start_monitoring
+        ;;
+    _daemon_loop)
+        # Internal command for daemon mode
+        _run_daemon_loop
         ;;
     stop-monitor)
         stop_monitoring

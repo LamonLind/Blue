@@ -76,7 +76,8 @@ install_golang() {
     echo -e "${CYAN}Installing Golang...${NC}"
     
     # Based on slowdns script pattern
-    local GO_VERSION="1.21.5"
+    # Note: Update this version periodically or use GO_VERSION env variable
+    local GO_VERSION="${GO_VERSION:-1.21.5}"
     
     # Download Go
     wget -q "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz

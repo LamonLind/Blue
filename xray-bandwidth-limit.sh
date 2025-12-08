@@ -78,8 +78,8 @@ get_client_stats() {
 EOF
 )
     
-    # Use xray API command
-    local result=$(/usr/local/bin/xray api statsquery --server="$XRAY_API" <<< "$stats_query" 2>/dev/null)
+    # Use xray API command (log errors for debugging)
+    local result=$(/usr/local/bin/xray api statsquery --server="$XRAY_API" <<< "$stats_query" 2>> "$LOG_FILE")
     
     # Parse uplink and downlink
     local uplink=$(echo "$result" | grep -oP '(?<="value":)\d+' | head -1)
@@ -253,8 +253,8 @@ check_client_limits() {
         local usage_gb=$(bytes_to_gb $total_usage)
         local limit_bytes=$(gb_to_bytes $total_gb)
         
-        # Check if limit exceeded
-        if [ $(echo "$total_usage >= $limit_bytes" | bc) -eq 1 ] && [ "$state" = "UNLIMITED" ]; then
+        # Check if limit exceeded (using bash integer comparison)
+        if [ "$total_usage" -ge "$limit_bytes" ] && [ "$state" = "UNLIMITED" ]; then
             log_msg "WARN" "Client $email exceeded quota: ${usage_gb}GB / ${total_gb}GB"
             
             # Disable client

@@ -1604,18 +1604,39 @@ show_debug_diagnostics() {
     
     case $debug_opt in
         1)
-            echo "DEBUG_MODE=1" >> /etc/environment
-            echo -e "${GREEN}Debug logging enabled. Restart bw-limit-check service to apply.${NC}"
-            echo -e "Run: systemctl restart bw-limit-check"
+            # Check if already enabled
+            if grep -q "^DEBUG_MODE=1" /etc/environment 2>/dev/null; then
+                echo -e "${YELLOW}Debug logging is already enabled in /etc/environment${NC}"
+            else
+                # Remove any existing DEBUG_MODE entries first
+                sed -i '/^DEBUG_MODE=/d' /etc/environment 2>/dev/null
+                echo "DEBUG_MODE=1" >> /etc/environment
+                echo -e "${GREEN}Debug logging enabled. Restart bw-limit-check service to apply.${NC}"
+                echo -e "Run: systemctl restart bw-limit-check"
+            fi
             ;;
         2)
-            sed -i '/DEBUG_MODE=1/d' /etc/environment 2>/dev/null
+            sed -i '/^DEBUG_MODE=/d' /etc/environment 2>/dev/null
             echo -e "${GREEN}Debug logging disabled. Restart bw-limit-check service to apply.${NC}"
             echo -e "Run: systemctl restart bw-limit-check"
             ;;
         3)
-            > "$DEBUG_LOG"
-            echo -e "${GREEN}Debug log cleared.${NC}"
+            # Confirm before clearing
+            if [ -f "$DEBUG_LOG" ]; then
+                local log_size=$(du -h "$DEBUG_LOG" | cut -f1)
+                echo -e "${YELLOW}Warning: This will clear $log_size of debug data.${NC}"
+                read -p "Are you sure? (y/N): " confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    # Backup before clearing
+                    cp "$DEBUG_LOG" "${DEBUG_LOG}.backup.$(date +%Y%m%d-%H%M%S)" 2>/dev/null
+                    > "$DEBUG_LOG"
+                    echo -e "${GREEN}Debug log cleared. Backup saved to ${DEBUG_LOG}.backup.*${NC}"
+                else
+                    echo -e "${YELLOW}Clear cancelled.${NC}"
+                fi
+            else
+                echo -e "${YELLOW}No debug log file to clear.${NC}"
+            fi
             ;;
         4)
             if [ -f "$DEBUG_LOG" ]; then

@@ -366,7 +366,9 @@ block_user_network() {
             #
             # WORKAROUND: Monitor blocked users and manually delete them via menu system
             # if hard network blocking is required.
-            # OR: Set bandwidth limit very low (e.g., 1MB) to trigger immediate blocking.
+            # NOTE: Setting a low bandwidth limit (e.g., 1MB) will trigger blocking faster,
+            # but this is still a soft block - user can technically still connect even when
+            # blocked, they'll just be blocked more quickly after reconnecting.
             
             local backup_dir="/etc/myvpn/blocked_users"
             mkdir -p "$backup_dir" 2>/dev/null
@@ -1608,7 +1610,7 @@ show_debug_diagnostics() {
             if grep -q "^DEBUG_MODE=1" /etc/environment 2>/dev/null; then
                 echo -e "${YELLOW}Debug logging is already enabled in /etc/environment${NC}"
             else
-                # Remove any existing DEBUG_MODE entries first
+                # Remove any old DEBUG_MODE entries to avoid duplicates
                 sed -i '/^DEBUG_MODE=/d' /etc/environment 2>/dev/null
                 echo "DEBUG_MODE=1" >> /etc/environment
                 echo -e "${GREEN}Debug logging enabled. Restart bw-limit-check service to apply.${NC}"
@@ -1616,6 +1618,7 @@ show_debug_diagnostics() {
             fi
             ;;
         2)
+            # Remove DEBUG_MODE entries from environment
             sed -i '/^DEBUG_MODE=/d' /etc/environment 2>/dev/null
             echo -e "${GREEN}Debug logging disabled. Restart bw-limit-check service to apply.${NC}"
             echo -e "Run: systemctl restart bw-limit-check"

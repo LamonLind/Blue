@@ -213,6 +213,9 @@ wget -q -O /usr/bin/uninstall "https://raw.githubusercontent.com/LamonLind/Blue/
 wget -q -O /usr/bin/dns "https://raw.githubusercontent.com/LamonLind/Blue/main/dns.sh"
 wget -q -O /usr/bin/netf "https://raw.githubusercontent.com/LamonLind/Blue/main/netf.sh"
 wget -q -O /usr/bin/bbr "https://raw.githubusercontent.com/LamonLind/Blue/main/bbr.sh"
+# Quota system scripts (3x-ui style bandwidth limits)
+wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
+wget -q -O /usr/bin/xray-traffic-monitor "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-traffic-monitor"
 #wget -q -O /usr/bin/del-xrays "https://raw.githubusercontent.com/LamonLind/Blue/main/del-xrays.sh"
 #wget -q -O /usr/bin/user-xrays "https://raw.githubusercontent.com/LamonLind/Blue/main/user-xrays.sh"
 chmod +x /usr/bin/add-ws
@@ -252,6 +255,8 @@ chmod +x /usr/bin/uninstall
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr
+chmod +x /usr/bin/xray-quota-manager
+chmod +x /usr/bin/xray-traffic-monitor
 #chmod +x /usr/bin/del-xrays
 #chmod +x /usr/bin/user-xrays
 
@@ -322,6 +327,7 @@ chmod 755 /etc/myvpn/blocked_users
 cat > /etc/systemd/system/host-capture.service <<-END
 [Unit]
 Description=Real-time Host Capture Service (2s interval)
+Documentation=https://github.com/LamonLind/Blue
 After=network.target xray.service nginx.service
 
 [Service]
@@ -334,9 +340,31 @@ RestartSec=3
 WantedBy=multi-user.target
 END
 
+# Create systemd service for xray quota monitor (3x-ui style)
+cat > /etc/systemd/system/xray-quota-monitor.service <<-END
+[Unit]
+Description=Xray Traffic Monitor & Quota Enforcer (3x-ui style)
+Documentation=https://github.com/LamonLind/Blue
+After=network.target xray.service
+Wants=xray.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /usr/bin/xray-traffic-monitor; sleep 60; done'
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+END
+
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable host-capture >/dev/null 2>&1
 systemctl start host-capture >/dev/null 2>&1
+systemctl enable xray-quota-monitor >/dev/null 2>&1
+systemctl start xray-quota-monitor >/dev/null 2>&1
 
 cat > /home/re_otm <<-END
 7

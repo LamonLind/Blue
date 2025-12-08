@@ -1,0 +1,171 @@
+#!/bin/bash
+# =========================================
+# Xray Bandwidth Quota Management
+# Based on 3x-ui implementation
+# Manages TotalGB limits per client
+# Author: LamonLind
+# (C) Copyright 2024
+# =========================================
+
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Configuration
+QUOTA_CONF="/etc/xray/client-quotas.conf"
+XRAY_CONFIG="/etc/xray/config.json"
+
+# Ensure directory exists
+mkdir -p /etc/xray 2>/dev/null
+
+# Initialize quota config if not exists
+[ ! -f "$QUOTA_CONF" ] && touch "$QUOTA_CONF"
+
+# Convert human size to bytes (like 3x-ui TotalGB conversion)
+# Input: 10GB, 500MB, 1TB
+# Output: bytes
+size_to_bytes() {
+    local size="$1"
+    local number=$(echo "$size" | grep -oP '^\d+(\.\d+)?')
+    local unit=$(echo "$size" | grep -oP '[A-Za-z]+$' | tr '[:lower:]' '[:upper:]')
+    
+    case "$unit" in
+        KB) echo $(awk "BEGIN {print int($number * 1024)}") ;;
+        MB) echo $(awk "BEGIN {print int($number * 1024 * 1024)}") ;;
+        GB) echo $(awk "BEGIN {print int($number * 1024 * 1024 * 1024)}") ;;
+        TB) echo $(awk "BEGIN {print int($number * 1024 * 1024 * 1024 * 1024)}") ;;
+        *) echo "$number" ;;
+    esac
+}
+
+# Convert bytes to human readable (like 3x-ui FormatTraffic)
+bytes_to_human() {
+    local bytes="$1"
+    if [ "$bytes" -ge 1099511627776 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f TB\", $bytes/1099511627776}")"
+    elif [ "$bytes" -ge 1073741824 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}")"
+    elif [ "$bytes" -ge 1048576 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}")"
+    elif [ "$bytes" -ge 1024 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f KB\", $bytes/1024}")"
+    else
+        echo "${bytes} Bytes"
+    fi
+}
+
+# Set quota for a user (like 3x-ui Client.TotalGB)
+# Usage: set_quota <email> <quota_size>
+set_quota() {
+    local email="$1"
+    local quota_size="$2"
+    
+    # Convert to bytes
+    local quota_bytes=$(size_to_bytes "$quota_size")
+    
+    # Remove old entry
+    grep -v "^$email|" "$QUOTA_CONF" > "$QUOTA_CONF.tmp" 2>/dev/null
+    mv "$QUOTA_CONF.tmp" "$QUOTA_CONF"
+    
+    # Add new entry: email|total_bytes|enabled
+    echo "$email|$quota_bytes|true" >> "$QUOTA_CONF"
+    
+    echo -e "${GREEN}✓ Quota set for $email: $(bytes_to_human $quota_bytes)${NC}"
+}
+
+# Remove quota for a user
+remove_quota() {
+    local email="$1"
+    
+    grep -v "^$email|" "$QUOTA_CONF" > "$QUOTA_CONF.tmp" 2>/dev/null
+    mv "$QUOTA_CONF.tmp" "$QUOTA_CONF"
+    
+    echo -e "${GREEN}✓ Quota removed for $email${NC}"
+}
+
+# Get quota for a user (returns bytes, 0 if unlimited)
+get_quota() {
+    local email="$1"
+    local quota=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f2)
+    echo "${quota:-0}"
+}
+
+# Check if user has quota
+has_quota() {
+    local email="$1"
+    grep -q "^$email|" "$QUOTA_CONF" 2>/dev/null
+}
+
+# List all quotas (like 3x-ui client list)
+list_quotas() {
+    echo -e "${BLUE}=== Client Bandwidth Quotas ===${NC}\n"
+    
+    if [ ! -s "$QUOTA_CONF" ]; then
+        echo -e "${YELLOW}No quotas configured${NC}"
+        return
+    fi
+    
+    printf "%-25s %-20s %-10s\n" "Email" "Total Quota" "Status"
+    printf "%-25s %-20s %-10s\n" "-----" "-----------" "------"
+    
+    while IFS='|' read -r email total_bytes enabled; do
+        [ -z "$email" ] && continue
+        
+        local total_human=$(bytes_to_human $total_bytes)
+        printf "%-25s %-20s %-10s\n" "$email" "$total_human" "$enabled"
+    done < "$QUOTA_CONF"
+}
+
+# Main command handler
+case "$1" in
+    set)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo -e "${RED}Usage: $0 set <email> <quota>${NC}"
+            echo -e "Example: $0 set user@example.com 10GB"
+            exit 1
+        fi
+        set_quota "$2" "$3"
+        ;;
+    
+    remove)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 remove <email>${NC}"
+            exit 1
+        fi
+        remove_quota "$2"
+        ;;
+    
+    get)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 get <email>${NC}"
+            exit 1
+        fi
+        quota=$(get_quota "$2")
+        if [ "$quota" -eq 0 ]; then
+            echo -e "${YELLOW}No quota set (unlimited)${NC}"
+        else
+            echo -e "Quota: $(bytes_to_human $quota)"
+        fi
+        ;;
+    
+    list)
+        list_quotas
+        ;;
+    
+    *)
+        echo -e "${BLUE}Xray Quota Manager (3x-ui style)${NC}"
+        echo -e "\nUsage: $0 <command> [options]"
+        echo -e "\nCommands:"
+        echo -e "  set <email> <quota>   - Set quota (e.g., 10GB, 500MB, 1TB)"
+        echo -e "  remove <email>        - Remove quota"
+        echo -e "  get <email>           - Get quota for user"
+        echo -e "  list                  - List all quotas"
+        echo -e "\nExamples:"
+        echo -e "  $0 set user@test.com 10GB"
+        echo -e "  $0 list"
+        exit 1
+        ;;
+esac

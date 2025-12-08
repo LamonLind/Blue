@@ -1,0 +1,17 @@
+[Unit]
+Description=Xray Traffic Monitor & Quota Enforcer
+Documentation=https://github.com/LamonLind/Blue
+After=network.target xray.service
+Wants=xray.service
+
+[Service]
+Type=simple
+# Run monitor every 60 seconds (like 3x-ui periodic job)
+ExecStart=/bin/bash -c 'while true; do /usr/bin/xray-traffic-monitor; sleep 60; done'
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

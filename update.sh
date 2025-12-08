@@ -41,7 +41,7 @@ update_all_scripts() {
     local scripts=(
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
-        "cek-trafik" "cek-bandwidth" "cek-ram" "limit-speed"
+        "cek-trafik" "cek-speed" "cek-bandwidth" "cek-ram" "limit-speed"
         "cek-bw-limit" "bw-tracking-lib" "realtime-bandwidth" "realtime-hosts"
         "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts"
@@ -60,7 +60,7 @@ update_all_scripts() {
         if [ "$script" == "menu" ]; then
             filename="menu4.sh"
         elif [ "$script" == "cek-speed" ]; then
-            filename="speedtes_cli.py"
+            filename="speedtest_cli.py"
         fi
         
         if wget -q -O "/usr/bin/${script}" "https://${REPO_URL}/${filename}"; then
@@ -72,17 +72,6 @@ update_all_scripts() {
             ((fail_count++))
         fi
     done
-    
-    # Update cek-speed (Python script)
-    echo -ne "${CYAN}Updating cek-speed...${NC}"
-    if wget -q -O "/usr/bin/cek-speed" "https://${REPO_URL}/speedtes_cli.py"; then
-        chmod +x "/usr/bin/cek-speed"
-        echo -e " ${GREEN}✓${NC}"
-        ((success_count++))
-    else
-        echo -e " ${RED}✗${NC}"
-        ((fail_count++))
-    fi
     
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"

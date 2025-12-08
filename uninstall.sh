@@ -195,9 +195,10 @@ cleanup_firewall() {
     iptables -F OUTPUT 2>/dev/null
     
     # Remove custom bandwidth tracking chains
-    for uid in $(iptables -L -n | grep "BW_" | awk '{print $1}' | sort -u); do
-        iptables -F "$uid" 2>/dev/null
-        iptables -X "$uid" 2>/dev/null
+    # First, list all chains and extract those starting with BW_
+    for chain in $(iptables -L | grep '^Chain BW_' | awk '{print $2}'); do
+        iptables -F "$chain" 2>/dev/null
+        iptables -X "$chain" 2>/dev/null
     done
     
     # Save iptables

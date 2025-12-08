@@ -332,22 +332,24 @@ block_user_network() {
             fi
             ;;
         vmess|vless|trojan|ssws)
-            # Block Xray user by email/username
-            # Get user UUID or identifier from config
-            local user_email="$username"
+            # Block Xray user using marker file
+            # NOTE: This is a "soft block" - user is marked as blocked in tracking
+            # but can still technically connect until fully removed from Xray config.
+            # For complete blocking, user should be deleted via the menu system.
+            #
+            # A "hard block" would require removing user from /etc/xray/config.json
+            # and reloading xray service, but this risks config corruption if done incorrectly.
+            # The marker file approach is safer and integrates with the bandwidth tracking system.
             
-            # Use xray API to get user stats and extract connection info
-            # Then block by destination or source IP patterns
-            # For now, we'll use a simpler approach: block by marking in xray config
-            
-            # Alternative: Use iptables to block by port if user has dedicated port
-            # For protocols using shared ports, we mark the user as blocked in tracking
-            # Xray will check this status and reject connections (requires xray routing modification)
+            local backup_dir="/etc/myvpn/blocked_users"
+            mkdir -p "$backup_dir" 2>/dev/null
             
             # Create a marker file for this blocked user
-            touch "/etc/myvpn/blocked_users/${username}" 2>/dev/null
+            touch "${backup_dir}/${username}" 2>/dev/null
             
-            echo -e "[${GREEN} OKEY ${NC}] Xray user $username marked as blocked"
+            # Log the blocking action
+            echo -e "[${GREEN} OKEY ${NC}] Xray user $username marked as blocked (soft block)"
+            echo -e "[${YELLOW} NOTE ${NC}] For hard block, remove user via menu system"
             ;;
     esac
     
@@ -374,7 +376,8 @@ unblock_user_network() {
             ;;
         vmess|vless|trojan|ssws)
             # Remove block marker
-            rm -f "/etc/myvpn/blocked_users/${username}" 2>/dev/null
+            local backup_dir="/etc/myvpn/blocked_users"
+            rm -f "${backup_dir}/${username}" 2>/dev/null
             echo -e "[${GREEN} OKEY ${NC}] Xray user $username unblocked"
             ;;
     esac
@@ -1317,25 +1320,30 @@ list_all_users() {
         local color="${GREEN}"
         local percentage=0
         
-        # Check if user is blocked first
+        # Calculate percentage first (unless unlimited)
+        if [ "$limit_mb" -eq 0 ] 2>/dev/null; then
+            # Unlimited account
+            percentage=0
+        else
+            # Calculate percentage for limited accounts
+            local limit_bytes=$(mb_to_bytes "$limit_mb")
+            if [ "$limit_bytes" -gt 0 ]; then
+                percentage=$((current_usage * 100 / limit_bytes))
+            fi
+        fi
+        
+        # Determine status based on blocking state and usage
         if is_user_blocked "$username" "$account_type"; then
             status="BLOCKED"
             color="${RED}"
         elif [ "$limit_mb" -eq 0 ] 2>/dev/null; then
             status="UNLIM"
-            percentage=0
-        else
-            local limit_bytes=$(mb_to_bytes "$limit_mb")
-            if [ "$limit_bytes" -gt 0 ]; then
-                percentage=$((current_usage * 100 / limit_bytes))
-            fi
-            if [ "$current_usage" -ge "$limit_bytes" ]; then
-                status="EXCEED"
-                color="${RED}"
-            elif [ "$percentage" -ge "$WARNING_THRESHOLD" ]; then
-                status="WARN"
-                color="${YELLOW}"
-            fi
+        elif [ "$current_usage" -ge "$limit_bytes" ]; then
+            status="EXCEED"
+            color="${RED}"
+        elif [ "$percentage" -ge "$WARNING_THRESHOLD" ]; then
+            status="WARN"
+            color="${YELLOW}"
         fi
         
         printf "%-4s %-15s %-10s %-12s %-10s %-8s ${color}%-10s${NC}\n" "$count" "$username" "$current_mb" "$limit_mb" "$account_type" "${percentage}%" "$status"

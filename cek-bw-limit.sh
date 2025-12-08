@@ -51,6 +51,8 @@ UWhite='\033[4;37m'
 WARNING_THRESHOLD=80  # Percentage at which to show warning (0-100)
 DELETED_LOG="/etc/myvpn/deleted.log"  # Log file for deleted users (legacy)
 BLOCKED_LOG="/etc/myvpn/blocked.log"  # Log file for blocked users
+DEBUG_LOG="/var/log/bw-limit-debug.log"  # Debug log for troubleshooting
+DEBUG_MODE="${DEBUG_MODE:-0}"  # Set to 1 to enable debug logging (export DEBUG_MODE=1)
 # Note: Check interval is configured in systemd service (/etc/systemd/system/bw-limit-check.service)
 
 # // Root Checking
@@ -82,15 +84,26 @@ touch "$BLOCKED_LOG" 2>/dev/null
 _APISERVER=127.0.0.1:10085
 _Xray=/usr/local/bin/xray
 
+# // Debug logging function
+debug_log() {
+    if [ "$DEBUG_MODE" = "1" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$DEBUG_LOG" 2>/dev/null
+    fi
+}
+
 # // Function to get user bandwidth usage from xray API (for xray protocols)
 get_xray_user_bandwidth() {
     local username=$1
     local total_bytes=0
     
+    debug_log "get_xray_user_bandwidth: Querying stats for user $username"
+    
     # Get bandwidth stats from xray API
     if [ -f "$_Xray" ]; then
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
+            debug_log "get_xray_user_bandwidth: Received stats from Xray API"
+            
             # Flatten multi-line JSON to single line for more reliable parsing
             # Xray API can return JSON in multi-line or compact format
             # Flattening ensures consistent parsing regardless of format
@@ -178,6 +191,10 @@ get_xray_user_bandwidth() {
             # Total bandwidth = upload + download to provide accurate bandwidth accounting
             # This ensures proper bandwidth limits are enforced on total data usage
             total_bytes=$((up_bytes + down_bytes))
+            
+            debug_log "get_xray_user_bandwidth: user=$username uplink=$up_bytes downlink=$down_bytes total=$total_bytes"
+        else
+            debug_log "get_xray_user_bandwidth: No stats received from Xray API for user $username"
         fi
     fi
     
@@ -254,6 +271,7 @@ get_user_bandwidth() {
         current_stats=$(get_ssh_user_bandwidth "$username")
         # For SSH, iptables counters persist until manually reset
         # No need for xray-style reset detection
+        debug_log "get_user_bandwidth: SSH user=$username current=$current_stats"
         echo $current_stats
         return
     else
@@ -268,14 +286,18 @@ get_user_bandwidth() {
     local baseline=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
     baseline=${baseline:-0}
     
+    debug_log "get_user_bandwidth: Xray user=$username current=$current_stats last=$last_stats baseline=$baseline"
+    
     # Detect xray stats reset: current stats < last known stats indicates xray was restarted
     # This includes the case when current_stats is 0 (xray just restarted)
     if [ "$last_stats" -gt 0 ] && [ "$current_stats" -lt "$last_stats" ]; then
         # Xray stats were reset, add last known stats to baseline
+        debug_log "get_user_bandwidth: RESET DETECTED for $username - adding last_stats=$last_stats to baseline=$baseline"
         baseline=$((baseline + last_stats))
         # Update baseline file
         sed -i "/^$username /d" "$BW_USAGE_FILE"
         echo "$username $baseline" >> "$BW_USAGE_FILE"
+        debug_log "get_user_bandwidth: New baseline=$baseline"
     fi
     
     # Update last known stats
@@ -283,7 +305,9 @@ get_user_bandwidth() {
     echo "$username $current_stats" >> "$BW_LAST_STATS_FILE"
     
     # Total usage = baseline + current xray stats
-    echo $((baseline + current_stats))
+    local total=$((baseline + current_stats))
+    debug_log "get_user_bandwidth: Returning total=$total (baseline=$baseline + current=$current_stats)"
+    echo $total
 }
 
 # // Function to convert MB to bytes
@@ -1535,6 +1559,80 @@ check_service_status() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
+# // Function to show debug diagnostics
+show_debug_diagnostics() {
+    clear
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\\E[0;41;36m   DEBUG DIAGNOSTICS & LOGGING      \E[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    
+    # Check debug mode status
+    if [ "$DEBUG_MODE" = "1" ]; then
+        echo -e " Debug Logging: ${GREEN}ENABLED${NC}"
+    else
+        echo -e " Debug Logging: ${YELLOW}DISABLED${NC}"
+        echo -e " To enable: export DEBUG_MODE=1 before running service"
+    fi
+    
+    echo -e " Debug Log File: $DEBUG_LOG"
+    
+    # Check if log file exists
+    if [ -f "$DEBUG_LOG" ]; then
+        local log_size=$(du -h "$DEBUG_LOG" | cut -f1)
+        local log_lines=$(wc -l < "$DEBUG_LOG")
+        echo -e " Log Size: ${GREEN}$log_size${NC} ($log_lines lines)"
+        echo ""
+        echo -e " ${YELLOW}Last 30 lines of debug log:${NC}"
+        echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        tail -30 "$DEBUG_LOG" 2>/dev/null || echo "  (Unable to read log file)"
+        echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    else
+        echo -e " Log File: ${YELLOW}NOT CREATED YET${NC}"
+        echo -e " (Log will be created when DEBUG_MODE=1 and service runs)"
+    fi
+    
+    echo ""
+    echo -e " ${YELLOW}Options:${NC}"
+    echo -e "   1. Enable debug logging (restart service required)"
+    echo -e "   2. Disable debug logging (restart service required)"
+    echo -e "   3. Clear debug log"
+    echo -e "   4. View full debug log"
+    echo -e "   5. Return to menu"
+    echo ""
+    read -p " Select option: " debug_opt
+    
+    case $debug_opt in
+        1)
+            echo "DEBUG_MODE=1" >> /etc/environment
+            echo -e "${GREEN}Debug logging enabled. Restart bw-limit-check service to apply.${NC}"
+            echo -e "Run: systemctl restart bw-limit-check"
+            ;;
+        2)
+            sed -i '/DEBUG_MODE=1/d' /etc/environment 2>/dev/null
+            echo -e "${GREEN}Debug logging disabled. Restart bw-limit-check service to apply.${NC}"
+            echo -e "Run: systemctl restart bw-limit-check"
+            ;;
+        3)
+            > "$DEBUG_LOG"
+            echo -e "${GREEN}Debug log cleared.${NC}"
+            ;;
+        4)
+            if [ -f "$DEBUG_LOG" ]; then
+                less "$DEBUG_LOG"
+            else
+                echo -e "${YELLOW}No debug log file found.${NC}"
+            fi
+            ;;
+        *)
+            return
+            ;;
+    esac
+    
+    echo ""
+    read -n 1 -s -r -p "Press any key to continue"
+}
+
 # // Interactive menu for data limit management
 data_limit_menu() {
     clear
@@ -1553,6 +1651,7 @@ data_limit_menu() {
     echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (2s data, 0.1s display)${NC}"
     echo -e "     ${BICyan}[${BIWhite}11${BICyan}] ${BIYellow}Unblock User (Manual Unblock)${NC}"
     echo -e "     ${BICyan}[${BIWhite}12${BICyan}] ${BIYellow}View Blocked Users${NC}"
+    echo -e "     ${BICyan}[${BIWhite}13${BICyan}] ${BIPurple}Debug Diagnostics & Logging${NC}"
     echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
     echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
     echo ""
@@ -1657,6 +1756,10 @@ data_limit_menu() {
             view_blocked_users
             echo ""
             read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        13)
+            show_debug_diagnostics
             data_limit_menu
             ;;
         x|X)

@@ -293,7 +293,6 @@ Link XHTTP TLS : vmess://$(echo $xhttp_tls | base64 -w 0)
 _______________________________________________________
 Link XHTTP none TLS : vmess://$(echo $xhttp_ntls | base64 -w 0)
 _______________________________________________________
-Expired On : $exp
 END
 systemctl restart xray > /dev/null 2>&1
 service cron restart > /dev/null 2>&1

@@ -137,8 +137,6 @@ Link XHTTP TLS : vless://${uuid}@${domain}:443?type=xhttp&encryption=none&securi
 _______________________________________________________
 Link XHTTP none TLS : vless://${uuid}@${domain}:80?type=xhttp&encryption=none&security=none&host=${domain}&path=/vless-xhttp#VLESS_XHTTP_NTLS_${user}
 _______________________________________________________
-Expired On : $exp
-_______________________________________________________
 
 END
 vlesslink1="vless://${uuid}@${domain}:443?type=ws&encryption=none&security=tls&host=${domain}&path=/vless&allowInsecure=1&sni=${domain}#XRAY_VLESS_TLS_${user}"

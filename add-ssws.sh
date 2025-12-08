@@ -99,13 +99,7 @@ v2ray-menu
 cipher="aes-128-gcm"
 uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
-read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
-bw_limit=${bw_limit:-0}
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
-# Add bandwidth limit if specified
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-    /usr/bin/cek-bw-limit add "$user" "$bw_limit" "ssws" >/dev/null 2>&1
-fi
 sed -i '/#ssws$/a\#ssw '"$user $exp"'\
 },{"password": "'""$uuid""'","method": "'""$cipher""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#ssgrpc$/a\#sswg '"$user $exp"'\

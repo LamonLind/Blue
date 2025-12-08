@@ -79,8 +79,6 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 read -p "Username : " Login
 read -p "Password : " Pass
 read -p "Expired (hari): " masaaktif
-read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
-bw_limit=${bw_limit:-0}
 
 IP=$(curl -sS ifconfig.me);
 IP=$(curl -s ipinfo.io/ip )
@@ -122,10 +120,6 @@ clear
 useradd -e `date -d "$masaaktif days" +"%Y-%m-%d"` -s /bin/false -M $Login
 exp="$(chage -l $Login | grep "Account expires" | awk -F": " '{print $2}')"
 echo -e "$Pass\n$Pass\n"|passwd $Login &> /dev/null
-# Add bandwidth limit if specified (only for non-main SSH accounts)
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-    /usr/bin/cek-bw-limit add "$Login" "$bw_limit" "ssh" >/dev/null 2>&1
-fi
 PID=`ps -ef |grep -v grep | grep sshws |awk '{print $2}'`
 
 cat > /home/vps/public_html/ssh-$Login.txt <<-END

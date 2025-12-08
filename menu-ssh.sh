@@ -104,11 +104,6 @@ if getent passwd $Pengguna > /dev/null 2>&1; then
         userdel -r $Pengguna > /dev/null 2>&1
         rm -f /home/vps/public_html/ssh-$Pengguna.txt
         
-        # Remove bandwidth limit and tracking entries (old format)
-        sed -i "/^$Pengguna /d" /etc/xray/bw-limit.conf 2>/dev/null
-        sed -i "/^$Pengguna /d" /etc/xray/bw-usage.conf 2>/dev/null
-        sed -i "/^$Pengguna /d" /etc/xray/bw-last-stats.conf 2>/dev/null
-        
         # Remove JSON-based tracking data (new format)
         rm -f /etc/myvpn/usage/${Pengguna}.json 2>/dev/null
         
@@ -156,13 +151,6 @@ clear
                else
                echo "echo "Expired- Username : $username are expired at: $tgl $bulantahun and removed : $hariini "" >> /usr/local/bin/deleteduser
 	           echo "Username $username that are expired at $tgl $bulantahun removed from the VPS $hariini"
-               # Get UID before deleting user for iptables cleanup (strip trailing spaces)
-               local clean_username="${username%% *}"
-               local uid=$(id -u "$clean_username" 2>/dev/null)
-               # Cleanup iptables rules for this user
-               if [ -n "$uid" ]; then
-                   cleanup_ssh_iptables "$uid"
-               fi
                # Remove user cron jobs
                local clean_username="${username%% *}"
                crontab -u "$clean_username" -r 2>/dev/null
@@ -172,11 +160,6 @@ clear
                
                # Delete user with home directory removal
                userdel -r $username > /dev/null 2>&1
-               
-               # Remove bandwidth limit and tracking entries (old format)
-               sed -i "/^${username%% *} /d" /etc/xray/bw-limit.conf 2>/dev/null
-               sed -i "/^${username%% *} /d" /etc/xray/bw-usage.conf 2>/dev/null
-               sed -i "/^${username%% *} /d" /etc/xray/bw-last-stats.conf 2>/dev/null
                
                # Remove JSON-based tracking data (new format)
                rm -f /etc/myvpn/usage/${clean_username}.json 2>/dev/null

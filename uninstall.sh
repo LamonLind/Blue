@@ -61,7 +61,6 @@ stop_services() {
     systemctl stop stunnel5 2>/dev/null
     systemctl stop ws-stunnel 2>/dev/null
     systemctl stop dropbear 2>/dev/null
-    systemctl stop bw-limit-check 2>/dev/null
     systemctl stop host-capture 2>/dev/null
     
     echo -e "${GREEN}✓ Services stopped${NC}"
@@ -80,7 +79,6 @@ disable_services() {
     systemctl disable stunnel5 2>/dev/null
     systemctl disable ws-stunnel 2>/dev/null
     systemctl disable dropbear 2>/dev/null
-    systemctl disable bw-limit-check 2>/dev/null
     systemctl disable host-capture 2>/dev/null
     
     echo -e "${GREEN}✓ Services disabled${NC}"
@@ -97,7 +95,6 @@ remove_systemd_files() {
     rm -f /etc/systemd/system/xray@trojanws.service
     rm -f /etc/systemd/system/xray@trnone.service
     rm -f /etc/systemd/system/ws-stunnel.service
-    rm -f /etc/systemd/system/bw-limit-check.service
     rm -f /etc/systemd/system/host-capture.service
     
     systemctl daemon-reload
@@ -113,8 +110,8 @@ remove_scripts() {
     local scripts=(
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
-        "cek-trafik" "cek-speed" "cek-bandwidth" "cek-ram" "limit-speed"
-        "cek-bw-limit" "bw-tracking-lib" "realtime-bandwidth" "realtime-hosts"
+        "cek-trafik" "cek-speed" "cek-ram" "limit-speed"
+        "realtime-hosts"
         "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts"
         "capture-host" "menu-bckp" "bckp" "usernew" "menu" "wbm" "xp"
@@ -193,13 +190,6 @@ cleanup_firewall() {
     iptables -F INPUT 2>/dev/null
     iptables -F FORWARD 2>/dev/null
     iptables -F OUTPUT 2>/dev/null
-    
-    # Remove custom bandwidth tracking chains
-    # First, list all chains and extract those starting with BW_
-    for chain in $(iptables -L | grep '^Chain BW_' | awk '{print $2}'); do
-        iptables -F "$chain" 2>/dev/null
-        iptables -X "$chain" 2>/dev/null
-    done
     
     # Save iptables
     iptables-save > /etc/iptables/rules.v4 2>/dev/null

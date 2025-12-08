@@ -39,9 +39,8 @@ update
 This is the recommended option that updates all components:
 - Account creation scripts (SSH, VMESS, VLESS, Trojan, Shadowsocks)
 - Menu scripts (all protocol menus)
-- Bandwidth management tools
 - System utilities (restart, autoreboot, clearlog, etc.)
-- Monitoring tools (cek-bandwidth, cek-trafik, etc.)
+- Monitoring tools (cek-trafik, etc.)
 
 #### Update Specific Components
 
@@ -56,13 +55,7 @@ This is the recommended option that updates all components:
 **3. Menu Scripts**
 - Updates main menu system
 
-**4. Bandwidth Management Scripts**
-- Updates bandwidth limit checking
-- Updates bandwidth tracking libraries
-- Updates real-time bandwidth monitoring
-- Updates host capture system
-
-**5. System Utilities**
+**4. System Utilities**
 - Updates restart/reboot scripts
 - Updates logging and cleanup tools
 - Updates backup/restore scripts
@@ -142,7 +135,6 @@ The uninstall process removes:
    - Host capture tasks
 
 6. **Firewall Rules**:
-   - Custom bandwidth tracking chains
    - VPN-specific iptables rules
 
 ### What Gets Preserved

@@ -61,6 +61,52 @@ bytes_to_mb() {
     echo $(( $1 / 1024 / 1024 ))
 }
 
+mb_to_bytes() {
+    echo $(( $1 * 1024 * 1024 ))
+}
+
+# Convert limit with unit to bytes
+# Supports: 100MB, 10GB, 1000M, 5G
+limit_to_bytes() {
+    local limit=$1
+    
+    # Extract number and unit
+    local number=$(echo "$limit" | grep -oP '^\d+(\.\d+)?')
+    local unit=$(echo "$limit" | grep -oP '[A-Za-z]+$' | tr '[:lower:]' '[:upper:]')
+    
+    # If no unit specified, assume MB for backward compatibility
+    if [ -z "$unit" ]; then
+        unit="MB"
+    fi
+    
+    # Convert based on unit
+    case "$unit" in
+        GB|G)
+            gb_to_bytes "$number"
+            ;;
+        MB|M)
+            mb_to_bytes "$number"
+            ;;
+        *)
+            echo "0"
+            return 1
+            ;;
+    esac
+}
+
+# Format bytes to human readable with appropriate unit
+bytes_to_human() {
+    local bytes=$1
+    
+    if [ "$bytes" -ge 1073741824 ]; then
+        # >= 1GB, show in GB
+        echo "$(bytes_to_gb $bytes)GB"
+    else
+        # < 1GB, show in MB
+        echo "$(bytes_to_mb $bytes)MB"
+    fi
+}
+
 # =========================================
 # XRAY API FUNCTIONS
 # =========================================
@@ -175,23 +221,41 @@ enable_client_in_config() {
 
 init_database() {
     touch "$CLIENT_LIMITS_DB"
-    # Database format: email|protocol|total_gb|baseline_bytes|state|last_check
+    # Database format: email|protocol|limit_bytes|baseline_bytes|state|last_check
     # States: UNLIMITED, LIMITED (disabled due to quota exceeded)
+    # limit_bytes: 0 = unlimited, or total bytes allowed
 }
 
 add_client_limit() {
     local email=$1
     local protocol=$2
-    local total_gb=${3:-0}  # 0 = unlimited
+    local limit=${3:-0}  # 0 = unlimited, or "100MB", "10GB", etc.
+    
+    # Convert limit to bytes
+    local limit_bytes=0
+    if [ "$limit" != "0" ] && [ -n "$limit" ]; then
+        limit_bytes=$(limit_to_bytes "$limit")
+        if [ $? -ne 0 ] || [ "$limit_bytes" = "0" ]; then
+            echo -e "${RED}Error: Invalid limit format. Use: 100MB, 10GB, 500M, 5G${NC}"
+            return 1
+        fi
+    fi
     
     # Remove existing entry
     sed -i "/^${email}|/d" "$CLIENT_LIMITS_DB" 2>/dev/null
     
     # Add new entry
     local timestamp=$(date +%s)
-    echo "${email}|${protocol}|${total_gb}|0|UNLIMITED|${timestamp}" >> "$CLIENT_LIMITS_DB"
+    echo "${email}|${protocol}|${limit_bytes}|0|UNLIMITED|${timestamp}" >> "$CLIENT_LIMITS_DB"
     
-    log_msg "INFO" "Added bandwidth limit for $email ($protocol): ${total_gb}GB"
+    local limit_display
+    if [ "$limit_bytes" = "0" ]; then
+        limit_display="UNLIMITED"
+    else
+        limit_display=$(bytes_to_human $limit_bytes)
+    fi
+    
+    log_msg "INFO" "Added bandwidth limit for $email ($protocol): ${limit_display}"
 }
 
 remove_client_limit() {
@@ -201,7 +265,7 @@ remove_client_limit() {
     log_msg "INFO" "Removed bandwidth limit for $email"
 }
 
-get_client_limit() {
+get_client_limit_bytes() {
     local email=$1
     local limit=$(grep "^${email}|" "$CLIENT_LIMITS_DB" 2>/dev/null | cut -d'|' -f3)
     echo "${limit:-0}"
@@ -224,14 +288,14 @@ update_client_state() {
     fi
     
     local protocol=$(echo "$record" | cut -d'|' -f2)
-    local total_gb=$(echo "$record" | cut -d'|' -f3)
+    local limit_bytes=$(echo "$record" | cut -d'|' -f3)
     local baseline=$(echo "$record" | cut -d'|' -f4)
     
     # Remove old record
     sed -i "/^${email}|/d" "$CLIENT_LIMITS_DB"
     
     # Add updated record
-    echo "${email}|${protocol}|${total_gb}|${baseline}|${new_state}|${timestamp}" >> "$CLIENT_LIMITS_DB"
+    echo "${email}|${protocol}|${limit_bytes}|${baseline}|${new_state}|${timestamp}" >> "$CLIENT_LIMITS_DB"
 }
 
 # =========================================
@@ -241,21 +305,21 @@ update_client_state() {
 check_client_limits() {
     [ ! -f "$CLIENT_LIMITS_DB" ] && return
     
-    while IFS='|' read -r email protocol total_gb baseline state last_check; do
+    while IFS='|' read -r email protocol limit_bytes baseline state last_check; do
         [ -z "$email" ] && continue
-        [ "$total_gb" = "0" ] && continue  # 0 means unlimited
+        [ "$limit_bytes" = "0" ] && continue  # 0 means unlimited
         
         # Get current traffic from Xray API
         local current_bytes=$(get_client_stats "$email" "$protocol")
         local total_usage=$((baseline + current_bytes))
         
-        # Convert to GB
-        local usage_gb=$(bytes_to_gb $total_usage)
-        local limit_bytes=$(gb_to_bytes $total_gb)
+        # Format for display
+        local usage_display=$(bytes_to_human $total_usage)
+        local limit_display=$(bytes_to_human $limit_bytes)
         
         # Check if limit exceeded (using bash integer comparison)
         if [ "$total_usage" -ge "$limit_bytes" ] && [ "$state" = "UNLIMITED" ]; then
-            log_msg "WARN" "Client $email exceeded quota: ${usage_gb}GB / ${total_gb}GB"
+            log_msg "WARN" "Client $email exceeded quota: ${usage_display} / ${limit_display}"
             
             # Disable client
             disable_client_in_config "$email" "$protocol"
@@ -263,7 +327,7 @@ check_client_limits() {
             # Update state
             update_client_state "$email" "LIMITED"
             
-            echo -e "${RED}[LIMIT EXCEEDED]${NC} Client $email disabled (${usage_gb}GB / ${total_gb}GB)"
+            echo -e "${RED}[LIMIT EXCEEDED]${NC} Client $email disabled (${usage_display} / ${limit_display})"
         fi
         
     done < "$CLIENT_LIMITS_DB"
@@ -281,7 +345,7 @@ reset_client_usage() {
     # Read current record
     local record=$(grep "^${email}|" "$CLIENT_LIMITS_DB" 2>/dev/null)
     local protocol=$(echo "$record" | cut -d'|' -f2)
-    local total_gb=$(echo "$record" | cut -d'|' -f3)
+    local limit_bytes=$(echo "$record" | cut -d'|' -f3)
     
     # Re-enable client
     enable_client_in_config "$email" "$protocol"
@@ -289,10 +353,17 @@ reset_client_usage() {
     # Reset in database (set baseline to 0, state to UNLIMITED)
     local timestamp=$(date +%s)
     sed -i "/^${email}|/d" "$CLIENT_LIMITS_DB"
-    echo "${email}|${protocol}|${total_gb}|0|UNLIMITED|${timestamp}" >> "$CLIENT_LIMITS_DB"
+    echo "${email}|${protocol}|${limit_bytes}|0|UNLIMITED|${timestamp}" >> "$CLIENT_LIMITS_DB"
+    
+    local limit_display
+    if [ "$limit_bytes" = "0" ]; then
+        limit_display="UNLIMITED"
+    else
+        limit_display=$(bytes_to_human $limit_bytes)
+    fi
     
     log_msg "INFO" "Reset usage for client $email"
-    echo -e "${GREEN}✓${NC} Usage reset for $email (quota: ${total_gb}GB)"
+    echo -e "${GREEN}✓${NC} Usage reset for $email (quota: ${limit_display})"
 }
 
 # =========================================
@@ -320,15 +391,14 @@ show_status() {
         return
     fi
     
-    printf "%-25s %-12s %-12s %-12s %-15s\n" "EMAIL" "PROTOCOL" "LIMIT (GB)" "USAGE (GB)" "STATE"
-    printf "%-25s %-12s %-12s %-12s %-15s\n" "-----" "--------" "----------" "-----------" "-----"
+    printf "%-25s %-12s %-15s %-15s %-15s\n" "EMAIL" "PROTOCOL" "LIMIT" "USAGE" "STATE"
+    printf "%-25s %-12s %-15s %-15s %-15s\n" "-----" "--------" "-----" "-----" "-----"
     
-    while IFS='|' read -r email protocol total_gb baseline state last_check; do
+    while IFS='|' read -r email protocol limit_bytes baseline state last_check; do
         [ -z "$email" ] && continue
         
         local current_bytes=$(get_client_stats "$email" "$protocol")
         local total_usage=$((baseline + current_bytes))
-        local usage_gb=$(bytes_to_gb $total_usage)
         
         # Color code state
         local state_color=""
@@ -338,14 +408,20 @@ show_status() {
             *)         state_color="${NC}" ;;
         esac
         
-        local limit_display="${total_gb}GB"
-        [ "$total_gb" = "0" ] && limit_display="UNLIMITED"
+        local limit_display
+        local usage_display=$(bytes_to_human $total_usage)
         
-        printf "%-25s %-12s %-12s %-12s ${state_color}%-15s${NC}\n" \
+        if [ "$limit_bytes" = "0" ]; then
+            limit_display="UNLIMITED"
+        else
+            limit_display=$(bytes_to_human $limit_bytes)
+        fi
+        
+        printf "%-25s %-12s %-15s %-15s ${state_color}%-15s${NC}\n" \
             "$email" \
             "$protocol" \
             "$limit_display" \
-            "${usage_gb}GB" \
+            "$usage_display" \
             "$state"
             
     done < "$CLIENT_LIMITS_DB"
@@ -362,8 +438,9 @@ ${YELLOW}Usage:${NC}
     $0 <command> [arguments]
 
 ${YELLOW}Commands:${NC}
-    ${GREEN}add-limit <email> <protocol> <totalGB>${NC}
-        Add bandwidth limit for client (0 = unlimited)
+    ${GREEN}add-limit <email> <protocol> <limit>${NC}
+        Add bandwidth limit for client
+        Limit formats: 100MB, 500M, 10GB, 5G, 0 (unlimited)
         Protocols: vmess, vless, trojan, shadowsocks
 
     ${GREEN}remove-limit <email>${NC}
@@ -382,7 +459,10 @@ ${YELLOW}Commands:${NC}
         Start monitoring daemon (background)
 
 ${YELLOW}Examples:${NC}
-    $0 add-limit user@example.com vmess 10
+    $0 add-limit user@example.com vmess 100MB    # 100 megabytes
+    $0 add-limit user@example.com vless 500M     # 500 megabytes
+    $0 add-limit premium@example.com trojan 10GB # 10 gigabytes
+    $0 add-limit unlimited@example.com vmess 0   # unlimited
     $0 status
     $0 reset-usage user@example.com
     $0 check
@@ -410,12 +490,14 @@ init_database
 case "${1:-}" in
     add-limit)
         if [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
-            echo -e "${RED}Error: email, protocol, and totalGB required${NC}"
-            echo "Usage: $0 add-limit <email> <protocol> <totalGB>"
+            echo -e "${RED}Error: email, protocol, and limit required${NC}"
+            echo "Usage: $0 add-limit <email> <protocol> <limit>"
+            echo "Limit formats: 100MB, 500M, 10GB, 5G, 0 (unlimited)"
             exit 1
         fi
-        add_client_limit "$2" "$3" "$4"
-        echo -e "${GREEN}✓${NC} Bandwidth limit set for $2: $4 GB"
+        if add_client_limit "$2" "$3" "$4"; then
+            echo -e "${GREEN}✓${NC} Bandwidth limit set for $2: $4"
+        fi
         ;;
     remove-limit)
         if [ -z "$2" ]; then

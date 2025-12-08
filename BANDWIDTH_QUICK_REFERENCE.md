@@ -116,9 +116,16 @@ journalctl -u ssh-limiter -f
 
 ## Examples
 
-### Xray: Limit client to 5GB
+### Xray: Limit client with MB or GB
 ```bash
-xray-bw-limit add-limit premium@example.com vless 5
+# Small quota: 100MB
+xray-bw-limit add-limit user@example.com vmess 100MB
+
+# Medium quota: 500MB
+xray-bw-limit add-limit user2@example.com vless 500M
+
+# Large quota: 5GB
+xray-bw-limit add-limit premium@example.com vless 5GB
 ```
 
 ### SSH: Monitor 3 users

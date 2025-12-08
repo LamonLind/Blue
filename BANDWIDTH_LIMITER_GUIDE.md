@@ -94,11 +94,12 @@ Example output:
 ```
 === Xray Client Bandwidth Status ===
 
-EMAIL                     PROTOCOL     LIMIT (GB)   USAGE (GB)   STATE
------                     --------     ----------   -----------  -----
-user@example.com          vmess        10GB         7.32GB       UNLIMITED
-blocked@example.com       vless        5GB          5.12GB       LIMITED
-premium@example.com       trojan       UNLIMITED    45.67GB      UNLIMITED
+EMAIL                     PROTOCOL     LIMIT           USAGE           STATE
+-----                     --------     -----           -----           -----
+user@example.com          vmess        100MB           73MB            UNLIMITED
+blocked@example.com       vless        500MB           512MB           LIMITED
+premium@example.com       trojan       10GB            4.32GB          UNLIMITED
+unlimited@example.com     vmess        UNLIMITED       45.67GB         UNLIMITED
 ```
 
 #### Reset Client Usage
@@ -305,13 +306,16 @@ ssh-limiter.sh install vpnuser1,vpnuser2,vpnuser3
 
 Location: `/etc/xray/client-limits.db`
 
-Format: `email|protocol|total_gb|baseline_bytes|state|last_check`
+Format: `email|protocol|limit_bytes|baseline_bytes|state|last_check`
 
 Example:
 ```
-user@example.com|vmess|10|0|UNLIMITED|1702056789
-blocked@example.com|vless|5|5368709120|LIMITED|1702056789
+user@example.com|vmess|104857600|0|UNLIMITED|1702056789
+blocked@example.com|vless|524288000|536870912|LIMITED|1702056789
+premium@example.com|trojan|10737418240|0|UNLIMITED|1702056790
 ```
+
+Note: Limits are stored in bytes internally. Use `xray-bw-limit status` to view human-readable formats.
 
 #### SSH Usage Database
 

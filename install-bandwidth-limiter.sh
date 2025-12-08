@@ -241,7 +241,7 @@ xray_menu() {
         1)
             read -p "Client email: " email
             read -p "Protocol (vmess/vless/trojan): " protocol
-            read -p "Total GB limit (0 for unlimited): " limit
+            read -p "Limit (e.g., 100MB, 10GB, 0 for unlimited): " limit
             /usr/local/bin/xray-bw-limit add-limit "$email" "$protocol" "$limit"
             read -p "Press enter to continue..."
             xray_menu

@@ -276,6 +276,11 @@ cat > /home/vps/public_html/vmess-$user.txt <<-END
 ====================================================================
 
 _______________________________________________________
+              Vmess Account Information
+_______________________________________________________
+Username/Email : $user
+Expired On : $exp
+_______________________________________________________
               Link Vmess Account
 _______________________________________________________
 Link TLS : vmess://$(echo $asu | base64 -w 0)
@@ -288,8 +293,6 @@ Link XHTTP TLS : vmess://$(echo $xhttp_tls | base64 -w 0)
 _______________________________________________________
 Link XHTTP none TLS : vmess://$(echo $xhttp_ntls | base64 -w 0)
 _______________________________________________________
-Expired On : $exp
-
 END
 systemctl restart xray > /dev/null 2>&1
 service cron restart > /dev/null 2>&1
@@ -298,6 +301,7 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "\\E[0;41;36m        Xray/Vmess Account        \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Remarks : ${user}" | tee -a /etc/log-create-user.log
+echo -e "Email/Username : ${user}" | tee -a /etc/log-create-user.log
 echo -e "Domain : ${domain}" | tee -a /etc/log-create-user.log
 echo -e "Port TLS : ${tls}" | tee -a /etc/log-create-user.log
 echo -e "Port none TLS : ${none}" | tee -a /etc/log-create-user.log

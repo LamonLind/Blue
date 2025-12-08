@@ -139,11 +139,13 @@ cat > /home/vps/public_html/ssh-$Login.txt <<-END
 ====================================================================
 
 ====================================================================
-        SSH Account       
+        SSH Account Information      
 ====================================================================
-Username : $Login
+Username/Email : $Login
 Password : $Pass
 Expired On : $exp
+====================================================================
+        SSH Connection Details       
 ====================================================================
 IP Address : $IP
 Host : $domen
@@ -176,7 +178,7 @@ if [[ ! -z "${PID}" ]]; then
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "\E[0;41;36m            SSH Account            \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-echo -e "Username : $Login" | tee -a /etc/log-create-user.log
+echo -e "Username/Email : $Login" | tee -a /etc/log-create-user.log
 echo -e "Password : $Pass" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
@@ -227,7 +229,7 @@ else
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "\E[0;41;36m            SSH Account            \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-echo -e "Username : $Login" | tee -a /etc/log-create-user.log
+echo -e "Username/Email : $Login" | tee -a /etc/log-create-user.log
 echo -e "Password : $Pass" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 if [ "$bw_limit" -gt 0 ] 2>/dev/null; then

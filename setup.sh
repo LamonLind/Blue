@@ -191,6 +191,9 @@ wget -q -O /usr/bin/cek-bandwidth "https://raw.githubusercontent.com/LamonLind/B
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
 wget -q -O /usr/bin/cek-bw-limit "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bw-limit.sh"
+wget -q -O /usr/bin/bw-tracking-lib "https://raw.githubusercontent.com/LamonLind/Blue/main/bw-tracking-lib.sh"
+wget -q -O /usr/bin/realtime-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/realtime-bandwidth.sh"
+wget -q -O /usr/bin/realtime-hosts "https://raw.githubusercontent.com/LamonLind/Blue/main/realtime-hosts.sh"
 wget -q -O /usr/bin/menu-vless "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vless.sh"
 wget -q -O /usr/bin/menu-vmess "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vmess.sh"
 wget -q -O /usr/bin/menu-socks "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-socks.sh"
@@ -233,6 +236,9 @@ chmod +x /usr/bin/cek-bandwidth
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
 chmod +x /usr/bin/cek-bw-limit
+chmod +x /usr/bin/bw-tracking-lib
+chmod +x /usr/bin/realtime-bandwidth
+chmod +x /usr/bin/realtime-hosts
 chmod +x /usr/bin/menu-vless
 chmod +x /usr/bin/menu-vmess
 chmod +x /usr/bin/menu-ss
@@ -338,23 +344,8 @@ touch /etc/myvpn/deleted.log 2>/dev/null
 chmod 755 /etc/myvpn/usage
 chmod 755 /etc/myvpn/blocked_users
 
-# Install bandwidth tracking library
-if [ -f "bw-tracking-lib.sh" ]; then
-    cp bw-tracking-lib.sh /usr/bin/bw-tracking-lib
-    chmod +x /usr/bin/bw-tracking-lib
-fi
-
-# Install real-time bandwidth monitor
-if [ -f "realtime-bandwidth.sh" ]; then
-    cp realtime-bandwidth.sh /usr/bin/realtime-bandwidth
-    chmod +x /usr/bin/realtime-bandwidth
-fi
-
-# Install real-time host capture monitor
-if [ -f "realtime-hosts.sh" ]; then
-    cp realtime-hosts.sh /usr/bin/realtime-hosts
-    chmod +x /usr/bin/realtime-hosts
-fi
+# Note: Bandwidth tracking library, realtime-bandwidth, and realtime-hosts
+# are now downloaded via wget commands above (lines 194-196)
 
 # Create systemd service for real-time host capture with safe 2-second intervals
 # Note: 2-second interval for real-time host monitoring with safe frequency (1-5 seconds)

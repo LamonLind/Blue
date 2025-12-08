@@ -213,6 +213,7 @@ wget -q -O /usr/bin/menu "https://raw.githubusercontent.com/LamonLind/Blue/main/
 wget -q -O /usr/bin/wbm "https://raw.githubusercontent.com/LamonLind/Blue/main/webmin.sh"
 wget -q -O /usr/bin/xp "https://raw.githubusercontent.com/LamonLind/Blue/main/xp.sh"
 wget -q -O /usr/bin/update "https://raw.githubusercontent.com/LamonLind/Blue/main/update.sh"
+wget -q -O /usr/bin/uninstall "https://raw.githubusercontent.com/LamonLind/Blue/main/uninstall.sh"
 wget -q -O /usr/bin/dns "https://raw.githubusercontent.com/LamonLind/Blue/main/dns.sh"
 wget -q -O /usr/bin/netf "https://raw.githubusercontent.com/LamonLind/Blue/main/netf.sh"
 wget -q -O /usr/bin/bbr "https://raw.githubusercontent.com/LamonLind/Blue/main/bbr.sh"
@@ -255,6 +256,7 @@ chmod +x /usr/bin/bckp
 chmod +x /usr/bin/wbm
 chmod +x /usr/bin/xp
 chmod +x /usr/bin/update
+chmod +x /usr/bin/uninstall
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr

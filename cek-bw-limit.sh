@@ -51,6 +51,8 @@ UWhite='\033[4;37m'
 WARNING_THRESHOLD=80  # Percentage at which to show warning (0-100)
 DELETED_LOG="/etc/myvpn/deleted.log"  # Log file for deleted users (legacy)
 BLOCKED_LOG="/etc/myvpn/blocked.log"  # Log file for blocked users
+DEBUG_LOG="/var/log/bw-limit-debug.log"  # Debug log for troubleshooting
+DEBUG_MODE="${DEBUG_MODE:-0}"  # Set to 1 to enable debug logging (export DEBUG_MODE=1)
 # Note: Check interval is configured in systemd service (/etc/systemd/system/bw-limit-check.service)
 
 # // Root Checking
@@ -82,15 +84,26 @@ touch "$BLOCKED_LOG" 2>/dev/null
 _APISERVER=127.0.0.1:10085
 _Xray=/usr/local/bin/xray
 
+# // Debug logging function
+debug_log() {
+    if [ "$DEBUG_MODE" = "1" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$DEBUG_LOG" 2>/dev/null
+    fi
+}
+
 # // Function to get user bandwidth usage from xray API (for xray protocols)
 get_xray_user_bandwidth() {
     local username=$1
     local total_bytes=0
     
+    debug_log "get_xray_user_bandwidth: Querying stats for user $username"
+    
     # Get bandwidth stats from xray API
     if [ -f "$_Xray" ]; then
         local stats=$($_Xray api statsquery --server=$_APISERVER 2>/dev/null)
         if [ -n "$stats" ]; then
+            debug_log "get_xray_user_bandwidth: Received stats from Xray API"
+            
             # Flatten multi-line JSON to single line for more reliable parsing
             # Xray API can return JSON in multi-line or compact format
             # Flattening ensures consistent parsing regardless of format
@@ -178,6 +191,10 @@ get_xray_user_bandwidth() {
             # Total bandwidth = upload + download to provide accurate bandwidth accounting
             # This ensures proper bandwidth limits are enforced on total data usage
             total_bytes=$((up_bytes + down_bytes))
+            
+            debug_log "get_xray_user_bandwidth: user=$username uplink=$up_bytes downlink=$down_bytes total=$total_bytes"
+        else
+            debug_log "get_xray_user_bandwidth: No stats received from Xray API for user $username"
         fi
     fi
     
@@ -254,6 +271,7 @@ get_user_bandwidth() {
         current_stats=$(get_ssh_user_bandwidth "$username")
         # For SSH, iptables counters persist until manually reset
         # No need for xray-style reset detection
+        debug_log "get_user_bandwidth: SSH user=$username current=$current_stats"
         echo $current_stats
         return
     else
@@ -268,14 +286,18 @@ get_user_bandwidth() {
     local baseline=$(grep "^$username " "$BW_USAGE_FILE" 2>/dev/null | awk '{print $2}')
     baseline=${baseline:-0}
     
+    debug_log "get_user_bandwidth: Xray user=$username current=$current_stats last=$last_stats baseline=$baseline"
+    
     # Detect xray stats reset: current stats < last known stats indicates xray was restarted
     # This includes the case when current_stats is 0 (xray just restarted)
     if [ "$last_stats" -gt 0 ] && [ "$current_stats" -lt "$last_stats" ]; then
         # Xray stats were reset, add last known stats to baseline
+        debug_log "get_user_bandwidth: RESET DETECTED for $username - adding last_stats=$last_stats to baseline=$baseline"
         baseline=$((baseline + last_stats))
         # Update baseline file
         sed -i "/^$username /d" "$BW_USAGE_FILE"
         echo "$username $baseline" >> "$BW_USAGE_FILE"
+        debug_log "get_user_bandwidth: New baseline=$baseline"
     fi
     
     # Update last known stats
@@ -283,7 +305,9 @@ get_user_bandwidth() {
     echo "$username $current_stats" >> "$BW_LAST_STATS_FILE"
     
     # Total usage = baseline + current xray stats
-    echo $((baseline + current_stats))
+    local total=$((baseline + current_stats))
+    debug_log "get_user_bandwidth: Returning total=$total (baseline=$baseline + current=$current_stats)"
+    echo $total
 }
 
 # // Function to convert MB to bytes
@@ -332,14 +356,9 @@ block_user_network() {
             fi
             ;;
         vmess|vless|trojan|ssws)
-            # Block Xray user using marker file
-            # NOTE: This is a "soft block" - user is marked as blocked in tracking
-            # but can still technically connect until fully removed from Xray config.
-            # For complete blocking, user should be deleted via the menu system.
-            #
-            # A "hard block" would require removing user from /etc/xray/config.json
-            # and reloading xray service, but this risks config corruption if done incorrectly.
-            # The marker file approach is safer and integrates with the bandwidth tracking system.
+            # Block Xray user by removing from config (HARD BLOCK - 3x-ui style)
+            # This actually prevents the user from connecting by removing them from Xray configuration
+            # and reloading the Xray service to apply changes.
             
             local backup_dir="/etc/myvpn/blocked_users"
             mkdir -p "$backup_dir" 2>/dev/null
@@ -347,9 +366,71 @@ block_user_network() {
             # Create a marker file for this blocked user
             touch "${backup_dir}/${username}" 2>/dev/null
             
-            # Log the blocking action
-            echo -e "[${GREEN} OKEY ${NC}] Xray user $username marked as blocked (soft block)"
-            echo -e "[${YELLOW} NOTE ${NC}] For hard block, remove user via menu system"
+            echo -e "[${YELLOW} INFO ${NC}] Implementing hard block for Xray user $username..."
+            
+            # Backup Xray config before modification
+            local backup_file="/etc/xray/config.json.backup.$(date +%Y%m%d-%H%M%S)"
+            cp /etc/xray/config.json "$backup_file" 2>/dev/null
+            echo -e "[${YELLOW} INFO ${NC}] Config backed up to: $backup_file"
+            
+            # Remove user from Xray config based on account type
+            local removed=0
+            case "$account_type" in
+                vmess)
+                    # Get exp to find all related entries
+                    local exp=$(grep -E "^#(vms|vmsg|vmsx) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#vms $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vmsg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vmsx $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^### $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+                vless)
+                    local exp=$(grep -E "^#(vls|vlsg|vlsx) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#vls $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vlsg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#vlsx $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+                trojan)
+                    local exp=$(grep -E "^#(tr|trg) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#tr $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#trg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+                ssws)
+                    local exp=$(grep -E "^#(ssw|sswg) $username " "/etc/xray/config.json" 2>/dev/null | head -1 | cut -d ' ' -f 3)
+                    if [ -n "$exp" ]; then
+                        sed -i "/^#ssw $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        sed -i "/^#sswg $username $exp/,/^},{/d" /etc/xray/config.json 2>/dev/null
+                        removed=1
+                    fi
+                    ;;
+            esac
+            
+            if [ "$removed" -eq 1 ]; then
+                # Reload Xray service to apply changes
+                echo -e "[${YELLOW} INFO ${NC}] Reloading Xray service to apply changes..."
+                systemctl reload xray 2>/dev/null || systemctl restart xray 2>/dev/null
+                
+                if [ $? -eq 0 ]; then
+                    echo -e "[${GREEN} OKEY ${NC}] Xray user $username HARD BLOCKED (removed from config and service reloaded)"
+                    echo -e "[${GREEN} OKEY ${NC}] User cannot connect until manually restored from backup: $backup_file"
+                else
+                    echo -e "[${RED} EROR ${NC}] Failed to reload Xray service!"
+                    echo -e "[${YELLOW} WARN ${NC}] Config changes made but service reload failed. Manual intervention required."
+                    echo -e "[${YELLOW} INFO ${NC}] Restore from backup if needed: cp $backup_file /etc/xray/config.json"
+                    return 1
+                fi
+            else
+                echo -e "[${YELLOW} WARN ${NC}] User $username not found in Xray config - already removed or doesn't exist"
+            fi
             ;;
     esac
     
@@ -375,10 +456,35 @@ unblock_user_network() {
             fi
             ;;
         vmess|vless|trojan|ssws)
-            # Remove block marker
+            # NOTE: With hard blocking, the user has been removed from Xray config
+            # Unblocking requires manually re-adding the user via the appropriate menu
+            # or restoring from the backup config file
+            
             local backup_dir="/etc/myvpn/blocked_users"
-            rm -f "${backup_dir}/${username}" 2>/dev/null
-            echo -e "[${GREEN} OKEY ${NC}] Xray user $username unblocked"
+            
+            # Check if user was blocked (marker file exists)
+            if [ -f "${backup_dir}/${username}" ]; then
+                # Find the most recent backup for this user
+                local latest_backup=$(ls -t /etc/xray/config.json.backup.* 2>/dev/null | head -1)
+                
+                # Remove block marker
+                rm -f "${backup_dir}/${username}" 2>/dev/null
+                
+                echo -e "[${YELLOW} WARN ${NC}] Xray user $username has been hard blocked (removed from config)"
+                echo -e "[${YELLOW} INFO ${NC}] To unblock, you must manually re-add the user via the appropriate menu:"
+                echo -e "[${YELLOW} INFO ${NC}]   - VMess: Use menu-vmess.sh"
+                echo -e "[${YELLOW} INFO ${NC}]   - VLESS: Use menu-vless.sh"
+                echo -e "[${YELLOW} INFO ${NC}]   - Trojan: Use menu-trojan.sh"
+                echo -e "[${YELLOW} INFO ${NC}]   - Shadowsocks: Use menu-ss.sh"
+                
+                if [ -n "$latest_backup" ]; then
+                    echo -e "[${YELLOW} INFO ${NC}] Or restore from latest backup: $latest_backup"
+                fi
+                
+                echo -e "[${GREEN} OKEY ${NC}] Block marker removed for $username"
+            else
+                echo -e "[${YELLOW} WARN ${NC}] No block marker found for $username - may not have been blocked"
+            fi
             ;;
     esac
     
@@ -735,6 +841,14 @@ delete_ssh_user() {
 check_bandwidth_limits() {
     local blocked_count=0
     
+    # On first run, initialize iptables rules for all SSH users
+    # Use a marker file to track if initialization has been done
+    local init_marker="/var/run/bw-limit-ssh-initialized"
+    if [ ! -f "$init_marker" ]; then
+        initialize_all_ssh_iptables
+        touch "$init_marker" 2>/dev/null
+    fi
+    
     # Read bandwidth limits file
     while IFS=' ' read -r username limit_mb account_type; do
         # Skip empty lines and comments
@@ -892,6 +1006,71 @@ display_bandwidth_usage() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
+# // Function to initialize all SSH iptables rules for users in bw-limit.conf
+# // This should be called when the monitoring service starts
+initialize_all_ssh_iptables() {
+    echo -e "[${YELLOW} INFO ${NC}] Initializing iptables rules for SSH users..."
+    local count=0
+    
+    while IFS=' ' read -r username limit_mb account_type; do
+        [[ -z "$username" || "$username" =~ ^# ]] && continue
+        
+        if [ "$account_type" = "ssh" ]; then
+            if initialize_ssh_iptables "$username" 2>/dev/null; then
+                ((count++))
+            fi
+        fi
+    done < "$BW_LIMIT_FILE"
+    
+    if [ "$count" -gt 0 ]; then
+        echo -e "[${GREEN} OKEY ${NC}] Initialized iptables rules for $count SSH user(s)"
+    fi
+}
+
+# // Function to initialize SSH iptables rules for bandwidth tracking
+# // This should be called when adding a bandwidth limit for SSH users
+# // to ensure rules are created proactively instead of waiting for first query
+initialize_ssh_iptables() {
+    local username=$1
+    
+    # Get user UID
+    local uid=$(id -u "$username" 2>/dev/null)
+    if [ -z "$uid" ]; then
+        echo -e "[${YELLOW} WARN ${NC}] Cannot get UID for SSH user $username"
+        return 1
+    fi
+    
+    # Verify iptables is available
+    if ! command -v iptables &>/dev/null; then
+        echo -e "[${YELLOW} WARN ${NC}] iptables not available"
+        return 1
+    fi
+    
+    local chain_name="BW_${uid}"
+    
+    # Check if chain already exists
+    if iptables -L "$chain_name" -n 2>/dev/null | grep -q "Chain"; then
+        echo -e "[${YELLOW} INFO ${NC}] iptables rules already exist for $username (UID: $uid)"
+        return 0
+    fi
+    
+    # Create bandwidth tracking chain and rules
+    echo -e "[${YELLOW} INFO ${NC}] Creating iptables rules for SSH user $username (UID: $uid)"
+    
+    # Create custom chain
+    iptables -N "$chain_name" 2>/dev/null
+    
+    # Set up tracking rules (same as in get_ssh_user_bandwidth)
+    # Insert in reverse order so CONNMARK ends up first
+    iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
+    iptables -I OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
+    iptables -I INPUT -m connmark --mark "$uid" -j "$chain_name" 2>/dev/null
+    iptables -A "$chain_name" -j RETURN 2>/dev/null
+    
+    echo -e "[${GREEN} OKEY ${NC}] iptables rules created for $username"
+    return 0
+}
+
 # // Function to add bandwidth limit for user
 add_bandwidth_limit() {
     local username=$1
@@ -904,6 +1083,11 @@ add_bandwidth_limit() {
     # Add new entry
     echo "$username $limit_mb $account_type" >> "$BW_LIMIT_FILE"
     echo -e "[${GREEN} OKEY ${NC}] Bandwidth limit set: $username = $limit_mb MB ($account_type)"
+    
+    # Initialize iptables rules for SSH users proactively
+    if [ "$account_type" = "ssh" ]; then
+        initialize_ssh_iptables "$username"
+    fi
 }
 
 # // Function to save current usage to persistent storage
@@ -1453,6 +1637,102 @@ check_service_status() {
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 }
 
+# // Function to show debug diagnostics
+show_debug_diagnostics() {
+    clear
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\\E[0;41;36m   DEBUG DIAGNOSTICS & LOGGING      \E[0m"
+    echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    
+    # Check debug mode status
+    if [ "$DEBUG_MODE" = "1" ]; then
+        echo -e " Debug Logging: ${GREEN}ENABLED${NC}"
+    else
+        echo -e " Debug Logging: ${YELLOW}DISABLED${NC}"
+        echo -e " To enable: export DEBUG_MODE=1 before running service"
+    fi
+    
+    echo -e " Debug Log File: $DEBUG_LOG"
+    
+    # Check if log file exists
+    if [ -f "$DEBUG_LOG" ]; then
+        local log_size=$(du -h "$DEBUG_LOG" | cut -f1)
+        local log_lines=$(wc -l < "$DEBUG_LOG")
+        echo -e " Log Size: ${GREEN}$log_size${NC} ($log_lines lines)"
+        echo ""
+        echo -e " ${YELLOW}Last 30 lines of debug log:${NC}"
+        echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+        tail -30 "$DEBUG_LOG" 2>/dev/null || echo "  (Unable to read log file)"
+        echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    else
+        echo -e " Log File: ${YELLOW}NOT CREATED YET${NC}"
+        echo -e " (Log will be created when DEBUG_MODE=1 and service runs)"
+    fi
+    
+    echo ""
+    echo -e " ${YELLOW}Options:${NC}"
+    echo -e "   1. Enable debug logging (restart service required)"
+    echo -e "   2. Disable debug logging (restart service required)"
+    echo -e "   3. Clear debug log"
+    echo -e "   4. View full debug log"
+    echo -e "   5. Return to menu"
+    echo ""
+    read -p " Select option: " debug_opt
+    
+    case $debug_opt in
+        1)
+            # Check if already enabled
+            if grep -q "^DEBUG_MODE=1" /etc/environment 2>/dev/null; then
+                echo -e "${YELLOW}Debug logging is already enabled in /etc/environment${NC}"
+            else
+                # Remove any old DEBUG_MODE entries to avoid duplicates
+                sed -i '/^DEBUG_MODE=/d' /etc/environment 2>/dev/null
+                echo "DEBUG_MODE=1" >> /etc/environment
+                echo -e "${GREEN}Debug logging enabled. Restart bw-limit-check service to apply.${NC}"
+                echo -e "Run: systemctl restart bw-limit-check"
+            fi
+            ;;
+        2)
+            # Remove DEBUG_MODE entries from environment
+            sed -i '/^DEBUG_MODE=/d' /etc/environment 2>/dev/null
+            echo -e "${GREEN}Debug logging disabled. Restart bw-limit-check service to apply.${NC}"
+            echo -e "Run: systemctl restart bw-limit-check"
+            ;;
+        3)
+            # Confirm before clearing
+            if [ -f "$DEBUG_LOG" ]; then
+                local log_size=$(du -h "$DEBUG_LOG" | cut -f1)
+                echo -e "${YELLOW}Warning: This will clear $log_size of debug data.${NC}"
+                read -p "Are you sure? (y/N): " confirm
+                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                    # Backup before clearing
+                    cp "$DEBUG_LOG" "${DEBUG_LOG}.backup.$(date +%Y%m%d-%H%M%S)" 2>/dev/null
+                    > "$DEBUG_LOG"
+                    echo -e "${GREEN}Debug log cleared. Backup saved to ${DEBUG_LOG}.backup.*${NC}"
+                else
+                    echo -e "${YELLOW}Clear cancelled.${NC}"
+                fi
+            else
+                echo -e "${YELLOW}No debug log file to clear.${NC}"
+            fi
+            ;;
+        4)
+            if [ -f "$DEBUG_LOG" ]; then
+                less "$DEBUG_LOG"
+            else
+                echo -e "${YELLOW}No debug log file found.${NC}"
+            fi
+            ;;
+        *)
+            return
+            ;;
+    esac
+    
+    echo ""
+    read -n 1 -s -r -p "Press any key to continue"
+}
+
 # // Interactive menu for data limit management
 data_limit_menu() {
     clear
@@ -1471,6 +1751,7 @@ data_limit_menu() {
     echo -e "     ${BICyan}[${BIWhite}10${BICyan}] ${BIGreen}Real-time Bandwidth Monitor (2s data, 0.1s display)${NC}"
     echo -e "     ${BICyan}[${BIWhite}11${BICyan}] ${BIYellow}Unblock User (Manual Unblock)${NC}"
     echo -e "     ${BICyan}[${BIWhite}12${BICyan}] ${BIYellow}View Blocked Users${NC}"
+    echo -e "     ${BICyan}[${BIWhite}13${BICyan}] ${BIPurple}Debug Diagnostics & Logging${NC}"
     echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
     echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
     echo ""
@@ -1575,6 +1856,10 @@ data_limit_menu() {
             view_blocked_users
             echo ""
             read -n 1 -s -r -p "Press any key to continue"
+            data_limit_menu
+            ;;
+        13)
+            show_debug_diagnostics
             data_limit_menu
             ;;
         x|X)

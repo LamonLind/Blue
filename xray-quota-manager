@@ -66,9 +66,10 @@ set_quota() {
     # Convert to bytes
     local quota_bytes=$(size_to_bytes "$quota_size")
     
-    # Remove old entry
-    grep -v "^$email|" "$QUOTA_CONF" > "$QUOTA_CONF.tmp" 2>/dev/null
-    mv "$QUOTA_CONF.tmp" "$QUOTA_CONF"
+    # Remove old entry (use mktemp for security)
+    local tmpfile=$(mktemp)
+    grep -v "^$email|" "$QUOTA_CONF" > "$tmpfile" 2>/dev/null
+    mv "$tmpfile" "$QUOTA_CONF"
     
     # Add new entry: email|total_bytes|enabled
     echo "$email|$quota_bytes|true" >> "$QUOTA_CONF"
@@ -79,9 +80,10 @@ set_quota() {
 # Remove quota for a user
 remove_quota() {
     local email="$1"
+    local tmpfile=$(mktemp)
     
-    grep -v "^$email|" "$QUOTA_CONF" > "$QUOTA_CONF.tmp" 2>/dev/null
-    mv "$QUOTA_CONF.tmp" "$QUOTA_CONF"
+    grep -v "^$email|" "$QUOTA_CONF" > "$tmpfile" 2>/dev/null
+    mv "$tmpfile" "$QUOTA_CONF"
     
     echo -e "${GREEN}✓ Quota removed for $email${NC}"
 }

@@ -17,13 +17,9 @@ StandardError=journal
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
 
-# Performance and resource management - balanced for production
-# Note: These values provide good performance without risking system stability
-# For high-load servers, consider using default values (remove Nice, IOScheduling, CPUScheduling)
-Nice=-5
-IOSchedulingClass=best-effort
-IOSchedulingPriority=2
-CPUSchedulingPolicy=other
+# Resource management - default scheduling for production stability
+# The service runs continuously but at normal priority to avoid impacting critical services
+# For production environments, default scheduling is recommended
 
 # Environment
 Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

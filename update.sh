@@ -137,6 +137,14 @@ manage_services() {
         echo -e " ${RED}✗${NC}"
     fi
     
+    # Download and install logrotate config for host-capture
+    echo -ne "${CYAN}Updating host-capture logrotate...${NC}"
+    if wget -q -O /etc/logrotate.d/host-capture "https://${REPO_URL}/host-capture-logrotate"; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+    fi
+    
     # Download capture-host-daemon.sh
     echo -ne "${CYAN}Updating capture-host-daemon...${NC}"
     if wget -q -O /usr/local/bin/capture-host-daemon.sh "https://${REPO_URL}/capture-host-daemon.sh"; then
@@ -146,10 +154,13 @@ manage_services() {
         echo -e " ${RED}✗${NC}"
     fi
     
-    # Ensure capture-host.sh is in /usr/local/bin
+    # Ensure capture-host.sh is in /usr/local/bin if it exists in /usr/bin
+    # Only copy if /usr/bin version is newer or /usr/local/bin doesn't exist
     if [ -f /usr/bin/capture-host ]; then
-        cp /usr/bin/capture-host /usr/local/bin/capture-host.sh
-        chmod +x /usr/local/bin/capture-host.sh
+        if [ ! -f /usr/local/bin/capture-host.sh ] || [ /usr/bin/capture-host -nt /usr/local/bin/capture-host.sh ]; then
+            cp /usr/bin/capture-host /usr/local/bin/capture-host.sh
+            chmod +x /usr/local/bin/capture-host.sh
+        fi
     fi
     
     # Ensure host-capture service is properly configured

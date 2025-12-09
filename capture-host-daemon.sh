@@ -50,8 +50,9 @@ log_msg "Host Capture Service starting..."
 # Main loop - run capture every 2 seconds (safe frequency)
 # 2 seconds provides real-time capture without overloading the system
 while true; do
-    # Run the capture script
-    "$CAPTURE_SCRIPT" >> "$LOG_FILE" 2>&1
+    # Run the capture script, filtering output to prevent log spam
+    # Only capture errors and important messages
+    "$CAPTURE_SCRIPT" 2>&1 | grep -E "(EROR|OKEY|new host)" >> "$LOG_FILE"
     
     # Wait 2 seconds before next capture (optimal frequency: 1-5 seconds)
     # - 1 second: very aggressive, high CPU usage

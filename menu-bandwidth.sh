@@ -57,14 +57,10 @@ bytes_to_human() {
     fi
 }
 
-# Get user traffic from xray stats API
-# NOTE: Tracking both uplink (client upload) and downlink (client download) divided by 3 to fix overcounting bug.
-# The 3x bug occurs because users exist in multiple inbound configurations
-# (ws/grpc/xhttp) and Xray aggregates stats across all of them.
-# We divide by 3 to get accurate single-protocol traffic.
-# Note: Integer division truncates values < 3 bytes to 0, which is acceptable
-# since bandwidth is measured in KB/MB/GB, not individual bytes.
-get_user_traffic() {
+# Get separate uplink and downlink traffic
+# NOTE: Downlink is divided by 3 to fix overcounting bug (users exist in 3 inbound configs)
+# Uplink is tracked normally without division
+get_user_traffic_detailed() {
     local email="$1"
     local uplink=0
     local downlink=0
@@ -72,7 +68,7 @@ get_user_traffic() {
     
     # Check if xray exists and is executable
     if [ -x "$_Xray" ]; then
-        # Query uplink (upload) - handle both "value":"123" and "value": 123 formats
+        # Query uplink (upload) - tracked normally without division
         uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
         [ -z "$uplink" ] && uplink=0
         
@@ -81,9 +77,26 @@ get_user_traffic() {
         [ -z "$downlink" ] && downlink=0
     fi
     
-    # Return (uplink + downlink) divided by 3 (fixes 3x overcounting bug)
-    # Integer division: (uplink + downlink) / 3
-    echo $(( (uplink + downlink) / 3 ))
+    # Return uplink (normal) and downlink/3 as space-separated values
+    echo "$uplink $(( downlink / 3 ))"
+}
+
+# Get user traffic from xray stats API
+# NOTE: Only downlink (client download) is divided by 3 to fix overcounting bug.
+# Uplink (client upload) is tracked normally.
+# The 3x bug occurs because users exist in multiple inbound configurations
+# (ws/grpc/xhttp) and Xray aggregates download stats across all of them.
+# Formula: uplink + (downlink / 3)
+get_user_traffic() {
+    local email="$1"
+    
+    # Get detailed traffic and sum them
+    local traffic_details=$(get_user_traffic_detailed "$email")
+    local uplink=${traffic_details%% *}
+    local downlink_div3=${traffic_details##* }
+    
+    # Return total: uplink + (downlink/3)
+    echo $(( uplink + downlink_div3 ))
 }
 
 # Function to view all bandwidth quotas

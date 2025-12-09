@@ -1,0 +1,31 @@
+[Unit]
+Description=Host Capture Service - Real-time VPN Host Monitoring
+After=network.target xray.service nginx.service
+Documentation=https://github.com/LamonLind/Blue
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/capture-host-daemon.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Security settings for full root access
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_DAC_READ_SEARCH
+
+# Performance and resource management
+Nice=-10
+IOSchedulingClass=realtime
+IOSchedulingPriority=0
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=50
+
+# Environment
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target

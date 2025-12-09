@@ -22,6 +22,21 @@
 #   Enhanced: SNI capture with tls_sni pattern
 #   Enhanced: Proxy host capture with bug_host pattern
 #   Affected files: capture-host.sh
+#
+# - Added user quota reset feature: Reset bandwidth usage and re-enable users
+#   New script: reset-user-quota.sh for interactive quota reset
+#   Enhanced: xray-quota-manager with 'reset' command
+#   Enhanced: menu-bandwidth.sh with reset option
+#   Feature: Automatic Xray service restart after reset
+#   Feature: Statistics clearing via Xray API
+#   Affected files: xray-quota-manager, menu-bandwidth.sh, reset-user-quota.sh
+#
+# - Added host capture service daemon for continuous monitoring
+#   New service: host-capture.service (systemd service)
+#   New daemon: capture-host-daemon.sh (continuous loop with 2s interval)
+#   Feature: Full root access for comprehensive log monitoring
+#   Feature: Automatic startup and restart on failure
+#   Affected files: host-capture.service, capture-host-daemon.sh
 # =========================================
 
 # Color definitions
@@ -114,6 +129,29 @@ manage_services() {
         echo -e " ${RED}✗${NC}"
     fi
     
+    # Download and install host-capture service file
+    echo -ne "${CYAN}Updating host-capture.service...${NC}"
+    if wget -q -O /etc/systemd/system/host-capture.service "https://${REPO_URL}/host-capture.service"; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+    fi
+    
+    # Download capture-host-daemon.sh
+    echo -ne "${CYAN}Updating capture-host-daemon...${NC}"
+    if wget -q -O /usr/local/bin/capture-host-daemon.sh "https://${REPO_URL}/capture-host-daemon.sh"; then
+        chmod +x /usr/local/bin/capture-host-daemon.sh
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+    fi
+    
+    # Ensure capture-host.sh is in /usr/local/bin
+    if [ -f /usr/bin/capture-host ]; then
+        cp /usr/bin/capture-host /usr/local/bin/capture-host.sh
+        chmod +x /usr/local/bin/capture-host.sh
+    fi
+    
     # Ensure host-capture service is properly configured
     if [ -f /etc/systemd/system/host-capture.service ]; then
         systemctl daemon-reload
@@ -121,6 +159,9 @@ manage_services() {
         if ! systemctl is-active --quiet host-capture; then
             systemctl start host-capture 2>/dev/null
             echo -e "${GREEN}[INFO]${NC} Started host-capture service"
+        else
+            systemctl restart host-capture 2>/dev/null
+            echo -e "${GREEN}[INFO]${NC} Restarted host-capture service"
         fi
     fi
     
@@ -165,7 +206,7 @@ update_all_scripts() {
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
         "cek-trafik" "cek-speed" "cek-ram" "limit-speed"
-        "realtime-hosts"
+        "realtime-hosts" "reset-user-quota"
         "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts" "menu-bandwidth"
         "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp"
@@ -269,9 +310,11 @@ update_component() {
             wget -q -O /usr/bin/xray-quota-manager "https://${REPO_URL}/xray-quota-manager" && chmod +x /usr/bin/xray-quota-manager
             wget -q -O /usr/bin/xray-traffic-monitor "https://${REPO_URL}/xray-traffic-monitor" && chmod +x /usr/bin/xray-traffic-monitor
             wget -q -O /usr/bin/capture-host "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/bin/capture-host
+            wget -q -O /usr/local/bin/capture-host.sh "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/local/bin/capture-host.sh
             wget -q -O /usr/bin/realtime-hosts "https://${REPO_URL}/realtime-hosts.sh" && chmod +x /usr/bin/realtime-hosts
             wget -q -O /usr/bin/menu-captured-hosts "https://${REPO_URL}/menu-captured-hosts.sh" && chmod +x /usr/bin/menu-captured-hosts
             wget -q -O /usr/bin/menu-bandwidth "https://${REPO_URL}/menu-bandwidth.sh" && chmod +x /usr/bin/menu-bandwidth
+            wget -q -O /usr/bin/reset-user-quota "https://${REPO_URL}/reset-user-quota.sh" && chmod +x /usr/bin/reset-user-quota
             # Manage services and directories
             ensure_directories
             manage_services

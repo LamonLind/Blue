@@ -229,6 +229,37 @@ remove_user_quota() {
     echo ""
 }
 
+# Function to reset user quota and re-enable
+reset_user_quota() {
+    clear
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "\E[44;1;39m             RESET USER QUOTA & RE-ENABLE                       \E[0m"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e " ${BICyan}This will:${NC}"
+    echo -e "  ${YELLOW}•${NC} Reset bandwidth usage statistics to zero"
+    echo -e "  ${YELLOW}•${NC} Re-enable user if they were disabled due to quota"
+    echo -e "  ${YELLOW}•${NC} Keep the existing quota limit"
+    echo -e "  ${YELLOW}•${NC} Restart Xray service automatically"
+    echo ""
+    read -p " Enter username/email: " user_email
+    
+    if [ -z "$user_email" ]; then
+        echo -e ""
+        echo -e " ${EROR} Username cannot be empty."
+    else
+        echo ""
+        read -p " Are you sure you want to reset quota for $user_email? (y/n): " confirm
+        if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+            echo ""
+            /usr/bin/xray-quota-manager reset "$user_email"
+        else
+            echo -e " ${INFO} Operation cancelled."
+        fi
+    fi
+    echo ""
+}
+
 # Function to check monitor service status
 check_monitor_status() {
     clear
@@ -284,8 +315,9 @@ echo -e "     ${BICyan}[${BIWhite}1${BICyan}] View All User Quotas & Usage      
 echo -e "     ${BICyan}[${BIWhite}2${BICyan}] View Specific User Quota      "
 echo -e "     ${BICyan}[${BIWhite}3${BICyan}] Set/Update User Quota      "
 echo -e "     ${BICyan}[${BIWhite}4${BICyan}] Remove User Quota     "
-echo -e "     ${BICyan}[${BIWhite}5${BICyan}] Check Monitor Status     "
-echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Restart Monitor Service     "
+echo -e "     ${BICyan}[${BIWhite}5${BICyan}] Reset User Quota & Re-Enable     "
+echo -e "     ${BICyan}[${BIWhite}6${BICyan}] Check Monitor Status     "
+echo -e "     ${BICyan}[${BIWhite}7${BICyan}] Restart Monitor Service     "
 echo -e " ${BICyan}└─────────────────────────────────────────────────────┘${NC}"
 echo -e "     ${BIYellow}Press x or [ Ctrl+C ] • To-${BIWhite}Exit${NC}"
 echo ""
@@ -296,8 +328,9 @@ case $opt in
 2) view_user_quota ;;
 3) set_user_quota ;;
 4) remove_user_quota ;;
-5) check_monitor_status ;;
-6) restart_monitor ;;
+5) reset_user_quota ;;
+6) check_monitor_status ;;
+7) restart_monitor ;;
 0) clear ; menu ;;
 x) exit ;;
 *) echo -e "" ; echo "Press any key to back on menu" ; sleep 1 ; menu ;;

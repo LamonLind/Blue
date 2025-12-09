@@ -33,12 +33,12 @@ get_user_traffic() {
     
     # Query xray stats API
     if command -v xray &> /dev/null; then
-        # Get uplink (upload) - use portable grep
-        uplink=$(xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | grep -oE 'value":[0-9]+' | sed 's/value"://' | head -1)
+        # Get uplink (upload) - parse JSON response properly
+        uplink=$(xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | grep -oE '"value":"[0-9]+"' | grep -oE '[0-9]+' | head -1)
         [ -z "$uplink" ] && uplink=0
         
-        # Get downlink (download) - use portable grep
-        downlink=$(xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | grep -oE 'value":[0-9]+' | sed 's/value"://' | head -1)
+        # Get downlink (download) - parse JSON response properly
+        downlink=$(xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | grep -oE '"value":"[0-9]+"' | grep -oE '[0-9]+' | head -1)
         [ -z "$downlink" ] && downlink=0
     fi
     
@@ -91,6 +91,12 @@ disable_user() {
 monitor_quotas() {
     # Check if xray is running
     if ! systemctl is-active --quiet xray; then
+        log_msg "Xray service not running, skipping quota check"
+        return
+    fi
+    
+    # Check if quota config exists and has entries
+    if [ ! -f "$QUOTA_CONF" ] || [ ! -s "$QUOTA_CONF" ]; then
         return
     fi
     
@@ -106,6 +112,9 @@ monitor_quotas() {
         
         # Get current traffic (Up + Down)
         current_traffic=$(get_user_traffic "$email")
+        
+        # Log current usage for debugging
+        log_msg "User: $email - Usage: $current_traffic bytes / Quota: $total_bytes bytes"
         
         # Check if quota exceeded (like 3x-ui: Up + Down >= Total)
         if [ "$current_traffic" -ge "$total_bytes" ]; then

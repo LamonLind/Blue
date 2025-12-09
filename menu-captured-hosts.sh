@@ -279,7 +279,7 @@ remove_host() {
 
 # Function to check if auto capture service is enabled and running
 is_auto_capture_enabled() {
-    if systemctl is-active --quiet capture-host 2>/dev/null; then
+    if systemctl is-active --quiet host-capture 2>/dev/null; then
         return 0
     else
         return 1
@@ -288,35 +288,15 @@ is_auto_capture_enabled() {
 
 # Function to create the continuous capture script
 create_continuous_capture_script() {
-    cat > /usr/bin/capture-host-daemon <<'SCRIPT'
-#!/bin/bash
-# Continuous Host Capture Daemon
-# Runs capture-host script continuously in a loop
-
-while true; do
-    /usr/bin/capture-host >/dev/null 2>&1
-    sleep 60
-done
-SCRIPT
-    chmod +x /usr/bin/capture-host-daemon
+    # Not needed - service is already created by setup.sh
+    # The host-capture service runs: /bin/bash -c 'while true; do /usr/bin/capture-host >/dev/null 2>&1; sleep 2; done'
+    return 0
 }
 
 # Function to create systemd service for continuous capture
 create_capture_service() {
-    cat > /etc/systemd/system/capture-host.service <<EOF
-[Unit]
-Description=Continuous Host Capture Service
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/capture-host-daemon
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
+    # Not needed - service is already created by setup.sh
+    # Just reload daemon in case
     systemctl daemon-reload
 }
 
@@ -331,17 +311,12 @@ enable_auto_capture() {
     if is_auto_capture_enabled; then
         echo -e " ${INFO} Auto capture is already running."
     else
-        # Create the daemon script
-        create_continuous_capture_script
-        # Create the systemd service
-        create_capture_service
         # Enable and start the service
-        systemctl enable capture-host >/dev/null 2>&1
-        systemctl start capture-host >/dev/null 2>&1
-        # Also remove old cron job if exists
-        rm -f /etc/cron.d/capture_host 2>/dev/null
+        systemctl daemon-reload >/dev/null 2>&1
+        systemctl enable host-capture >/dev/null 2>&1
+        systemctl start host-capture >/dev/null 2>&1
         echo -e " ${OKEY} Auto capture has been enabled."
-        echo -e " ${INFO} Hosts will be captured continuously (every 60 seconds)."
+        echo -e " ${INFO} Hosts will be captured continuously (every 2 seconds)."
     fi
     echo -e ""
 }
@@ -355,8 +330,8 @@ disable_auto_capture() {
     echo -e ""
     
     if is_auto_capture_enabled; then
-        systemctl stop capture-host >/dev/null 2>&1
-        systemctl disable capture-host >/dev/null 2>&1
+        systemctl stop host-capture >/dev/null 2>&1
+        systemctl disable host-capture >/dev/null 2>&1
         echo -e " ${OKEY} Auto capture has been disabled."
     else
         echo -e " ${INFO} Auto capture is already disabled."

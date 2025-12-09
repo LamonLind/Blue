@@ -58,24 +58,23 @@ bytes_to_human() {
 }
 
 # Get user traffic from xray stats API
+# NOTE: Only tracking uplink (client upload) to avoid 3x counting bug with downlink
+# Downlink was being counted 3x due to multiple inbound stats aggregation
 get_user_traffic() {
     local email="$1"
     local uplink=0
-    local downlink=0
     local _Xray="/usr/local/bin/xray"
     
     # Check if xray exists and is executable
     if [ -x "$_Xray" ]; then
         # Query uplink - handle both "value":"123" and "value": 123 formats
+        # Only tracking uplink to avoid 3x downlink bug
         uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
         [ -z "$uplink" ] && uplink=0
-        
-        # Query downlink - handle both "value":"123" and "value": 123 formats
-        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
-        [ -z "$downlink" ] && downlink=0
     fi
     
-    echo $((uplink + downlink))
+    # Return uplink only (fixes 3x download counting bug)
+    echo $uplink
 }
 
 # Function to view all bandwidth quotas

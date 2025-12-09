@@ -7,11 +7,19 @@
 # =========================================
 #
 # Changelog:
-# - Fixed bandwidth quota tracking: Download traffic was overcounted 3x
-#   Root cause: Users exist in multiple inbound configs (ws/grpc/xhttp)
-#   Fix: Track downlink divided by 3 for accurate bandwidth measurement
-#   Example: 6MB download now correctly shows ~6MB instead of 21MB
+# - Fixed bandwidth quota tracking: Now tracks both upload AND download traffic
+#   Root cause: Previous version only tracked download (downlink) traffic
+#   Fix: Track (uplink + downlink) / 3 for accurate total bandwidth measurement
+#   Example: 3MB upload + 6MB download now correctly shows ~3MB instead of ~2MB (download only)
 #   Affected files: xray-quota-manager, xray-traffic-monitor, menu-bandwidth.sh
+#
+# - Enhanced host capture system: Now captures more hostname patterns
+#   Added patterns: tcp: prefixed hosts (tcp:bug.cloudflare.com:443)
+#   Added patterns: ws:// and wss:// URL hosts
+#   Added patterns: Bug hosts, fronting hosts, CDN hosts
+#   Enhanced: SNI capture with tls_sni pattern
+#   Enhanced: Proxy host capture with bug_host pattern
+#   Affected files: capture-host.sh
 # =========================================
 
 # Color definitions

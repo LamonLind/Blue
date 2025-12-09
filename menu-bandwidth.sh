@@ -58,7 +58,7 @@ bytes_to_human() {
 }
 
 # Get user traffic from xray stats API
-# NOTE: Tracking downlink (client download) divided by 3 to fix overcounting bug.
+# NOTE: Tracking both uplink (client upload) and downlink (client download) divided by 3 to fix overcounting bug.
 # The 3x bug occurs because users exist in multiple inbound configurations
 # (ws/grpc/xhttp) and Xray aggregates stats across all of them.
 # We divide by 3 to get accurate single-protocol traffic.
@@ -66,20 +66,24 @@ bytes_to_human() {
 # since bandwidth is measured in KB/MB/GB, not individual bytes.
 get_user_traffic() {
     local email="$1"
+    local uplink=0
     local downlink=0
     local _Xray="/usr/local/bin/xray"
     
     # Check if xray exists and is executable
     if [ -x "$_Xray" ]; then
-        # Query downlink - handle both "value":"123" and "value": 123 formats
-        # Track downlink (client downloads) and divide by 3 to fix overcounting
+        # Query uplink (upload) - handle both "value":"123" and "value": 123 formats
+        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        [ -z "$uplink" ] && uplink=0
+        
+        # Query downlink (download) - handle both "value":"123" and "value": 123 formats
         downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
         [ -z "$downlink" ] && downlink=0
     fi
     
-    # Return downlink divided by 3 (fixes 3x overcounting bug)
-    # Integer division: downlink / 3
-    echo $((downlink / 3))
+    # Return (uplink + downlink) divided by 3 (fixes 3x overcounting bug)
+    # Integer division: (uplink + downlink) / 3
+    echo $(( (uplink + downlink) / 3 ))
 }
 
 # Function to view all bandwidth quotas

@@ -88,6 +88,14 @@ remove_deprecated() {
 manage_services() {
     echo -e "${YELLOW}[INFO]${NC} Managing system services..."
     
+    # Download and install xray-quota-monitor service file
+    echo -ne "${CYAN}Updating xray-quota-monitor.service...${NC}"
+    if wget -q -O /etc/systemd/system/xray-quota-monitor.service "https://${REPO_URL}/xray-quota-monitor.service"; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+    fi
+    
     # Ensure host-capture service is properly configured
     if [ -f /etc/systemd/system/host-capture.service ]; then
         systemctl daemon-reload
@@ -102,10 +110,9 @@ manage_services() {
     if [ -f /etc/systemd/system/xray-quota-monitor.service ]; then
         systemctl daemon-reload
         systemctl enable xray-quota-monitor 2>/dev/null
-        if ! systemctl is-active --quiet xray-quota-monitor; then
-            systemctl start xray-quota-monitor 2>/dev/null
-            echo -e "${GREEN}[INFO]${NC} Started xray-quota-monitor service"
-        fi
+        # Restart the service to apply any script changes
+        systemctl restart xray-quota-monitor 2>/dev/null
+        echo -e "${GREEN}[INFO]${NC} Restarted xray-quota-monitor service"
     fi
     
     echo -e "${GREEN}[INFO]${NC} Services managed successfully"

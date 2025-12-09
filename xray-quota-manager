@@ -157,10 +157,14 @@ reset_user_stats() {
     fi
     
     # Reset uplink stats
-    $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null
+    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Warning: Failed to reset uplink statistics${NC}"
+    fi
     
     # Reset downlink stats
-    $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null
+    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Warning: Failed to reset downlink statistics${NC}"
+    fi
     
     echo -e "${GREEN}✓ Statistics reset for $email${NC}"
 }
@@ -197,7 +201,12 @@ reset_user_quota() {
     # Step 2: Re-enable in quota config if disabled
     if [ "$quota_status" != "true" ]; then
         echo -e "${INFO} Re-enabling user in quota config..."
-        sed -i "s/^$email|\\([^|]*\\)|false/$email|\\1|true/" "$QUOTA_CONF"
+        # Use mktemp for safer file manipulation
+        local tmpfile=$(mktemp)
+        awk -v email="$email" -F'|' '
+            $1 == email { $3 = "true" }
+            { print $1 FS $2 FS $3 }
+        ' "$QUOTA_CONF" > "$tmpfile" && mv "$tmpfile" "$QUOTA_CONF"
         echo -e "${GREEN}✓ User re-enabled in quota config${NC}"
     else
         echo -e "${GREEN}✓ User already enabled in quota config${NC}"

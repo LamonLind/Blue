@@ -42,6 +42,17 @@ fi
 # Configuration
 QUOTA_CONF="/etc/xray/client-quotas.conf"
 XRAY_CONFIG="/etc/xray/config.json"
+QUOTA_MANAGER="/usr/bin/xray-quota-manager"
+
+# Check if xray-quota-manager exists
+if [ ! -x "$QUOTA_MANAGER" ]; then
+    echo -e "${EROR} xray-quota-manager not found or not executable"
+    echo -e "${INFO} Please install it first or run: update"
+    echo ""
+    read -n 1 -s -r -p "Press any key to exit"
+    echo ""
+    exit 1
+fi
 
 # Function to list users with quotas
 list_users_with_quotas() {
@@ -126,7 +137,7 @@ fi
 # Execute reset via xray-quota-manager
 echo ""
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-/usr/bin/xray-quota-manager reset "$user_email"
+"$QUOTA_MANAGER" reset "$user_email"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 read -n 1 -s -r -p "Press any key to back on menu"

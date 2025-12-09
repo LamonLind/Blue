@@ -25,7 +25,8 @@ if [ "${EUID}" -ne 0 ]; then
     exit 1
 fi
 
-# Log file
+# Configuration
+CAPTURE_SCRIPT="/usr/local/bin/capture-host.sh"
 LOG_FILE="/var/log/host-capture-service.log"
 
 # Function to log messages
@@ -33,13 +34,24 @@ log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# Check if capture script exists
+if [ ! -f "$CAPTURE_SCRIPT" ]; then
+    log_msg "ERROR: Capture script not found at $CAPTURE_SCRIPT"
+    exit 1
+fi
+
+if [ ! -x "$CAPTURE_SCRIPT" ]; then
+    log_msg "WARNING: Capture script not executable, attempting to fix..."
+    chmod +x "$CAPTURE_SCRIPT"
+fi
+
 log_msg "Host Capture Service starting..."
 
 # Main loop - run capture every 2 seconds (safe frequency)
 # 2 seconds provides real-time capture without overloading the system
 while true; do
     # Run the capture script
-    /usr/local/bin/capture-host.sh >> "$LOG_FILE" 2>&1
+    "$CAPTURE_SCRIPT" >> "$LOG_FILE" 2>&1
     
     # Wait 2 seconds before next capture (optimal frequency: 1-5 seconds)
     # - 1 second: very aggressive, high CPU usage

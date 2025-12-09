@@ -5,6 +5,12 @@
 # Author  : LamonLind
 # (C) Copyright 2024
 # =========================================
+#
+# Changelog:
+# - Fixed bandwidth quota tracking: Download traffic was being counted 3x
+#   Now tracking only uplink (client upload) to avoid the 3x counting bug
+#   Affected files: xray-quota-manager, xray-traffic-monitor, menu-bandwidth.sh
+# =========================================
 
 # Color definitions
 RED='\033[0;31m'

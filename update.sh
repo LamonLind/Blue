@@ -7,8 +7,10 @@
 # =========================================
 #
 # Changelog:
-# - Fixed bandwidth quota tracking: Download traffic was being counted 3x
-#   Now tracking only uplink (client upload) to avoid the 3x counting bug
+# - Fixed bandwidth quota tracking: Download traffic was overcounted 3x
+#   Root cause: Users exist in multiple inbound configs (ws/grpc/xhttp)
+#   Fix: Track downlink divided by 3 for accurate bandwidth measurement
+#   Example: 6MB download now correctly shows ~6MB instead of 21MB
 #   Affected files: xray-quota-manager, xray-traffic-monitor, menu-bandwidth.sh
 # =========================================
 

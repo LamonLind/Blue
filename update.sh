@@ -7,9 +7,10 @@
 # =========================================
 #
 # Changelog:
-# - Fixed bandwidth quota tracking: Now tracks ONLY downlink/3 for accurate measurement
-#   Root cause: Upload traffic doesn't report accurately in this VPN setup with Xray stats
-#   Fix: Track only downlink / 3 (client download traffic divided by 3)
+# - Fixed bandwidth quota tracking: Now accurately tracks upload and download traffic
+#   Root cause: Both uplink and downlink need to be divided by 3 to fix 3x overcounting
+#   Fix: Track (uplink/3) + (downlink/3) = (uplink + downlink) / 3
+#   Enhancement: Now displays upload and download traffic separately for better visibility
 #   The /3 division fixes 3x overcounting bug from multiple inbound configs (ws/grpc/xhttp)
 #   Affected files: xray-quota-manager, xray-traffic-monitor, menu-bandwidth.sh
 #

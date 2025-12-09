@@ -58,8 +58,10 @@ bytes_to_human() {
 }
 
 # Get user traffic from xray stats API
-# NOTE: Only tracking uplink (client upload) to avoid 3x counting bug with downlink
-# Downlink was being counted 3x due to multiple inbound stats aggregation
+# NOTE: Only tracking uplink (client upload) to avoid 3x counting bug with downlink.
+# The 3x bug occurs because downlink stats appear to aggregate across the multiple
+# inbound configurations (vless ws/grpc/xhttp, vmess ws/grpc/xhttp, etc.) even when
+# the user only connects via one protocol. Uplink tracking works correctly.
 get_user_traffic() {
     local email="$1"
     local uplink=0

@@ -58,25 +58,28 @@ bytes_to_human() {
 }
 
 # Get user traffic from xray stats API
-# NOTE: Only tracking uplink (client upload) to avoid 3x counting bug with downlink.
-# The 3x bug occurs because downlink stats appear to aggregate across the multiple
-# inbound configurations (vless ws/grpc/xhttp, vmess ws/grpc/xhttp, etc.) even when
-# the user only connects via one protocol. Uplink tracking works correctly.
+# NOTE: Tracking downlink (client download) divided by 3 to fix overcounting bug.
+# The 3x bug occurs because users exist in multiple inbound configurations
+# (ws/grpc/xhttp) and Xray aggregates stats across all of them.
+# We divide by 3 to get accurate single-protocol traffic.
+# Note: Integer division truncates values < 3 bytes to 0, which is acceptable
+# since bandwidth is measured in KB/MB/GB, not individual bytes.
 get_user_traffic() {
     local email="$1"
-    local uplink=0
+    local downlink=0
     local _Xray="/usr/local/bin/xray"
     
     # Check if xray exists and is executable
     if [ -x "$_Xray" ]; then
-        # Query uplink - handle both "value":"123" and "value": 123 formats
-        # Only tracking uplink to avoid 3x downlink bug
-        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
-        [ -z "$uplink" ] && uplink=0
+        # Query downlink - handle both "value":"123" and "value": 123 formats
+        # Track downlink (client downloads) and divide by 3 to fix overcounting
+        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        [ -z "$downlink" ] && downlink=0
     fi
     
-    # Return uplink only (fixes 3x download counting bug)
-    echo $uplink
+    # Return downlink divided by 3 (fixes 3x overcounting bug)
+    # Integer division: downlink / 3
+    echo $((downlink / 3))
 }
 
 # Function to view all bandwidth quotas

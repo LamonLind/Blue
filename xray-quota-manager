@@ -135,8 +135,8 @@ get_user_traffic() {
     
     # Get detailed traffic and sum them
     local traffic_details=$(get_user_traffic_detailed "$email")
-    local uplink_div3=$(echo $traffic_details | cut -d' ' -f1)
-    local downlink_div3=$(echo $traffic_details | cut -d' ' -f2)
+    local uplink_div3=${traffic_details%% *}
+    local downlink_div3=${traffic_details##* }
     
     # Return total: (uplink/3) + (downlink/3)
     echo $(( uplink_div3 + downlink_div3 ))

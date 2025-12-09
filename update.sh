@@ -24,6 +24,31 @@ fi
 # Export GitHub repository URL
 REPO_URL="raw.githubusercontent.com/LamonLind/Blue/main"
 
+# Self-update function
+self_update() {
+    echo -e "${YELLOW}[INFO]${NC} Checking for update script updates..."
+    
+    # Download latest update.sh to temporary location
+    local temp_update="/tmp/update.sh.new"
+    if wget -q -O "$temp_update" "https://${REPO_URL}/update.sh"; then
+        # Check if the downloaded file is different
+        if ! cmp -s "$temp_update" "/usr/bin/update" 2>/dev/null && ! cmp -s "$temp_update" "$0" 2>/dev/null; then
+            echo -e "${GREEN}[INFO]${NC} Update script has new version, updating..."
+            chmod +x "$temp_update"
+            cp "$temp_update" "/usr/bin/update"
+            rm -f "$temp_update"
+            echo -e "${GREEN}[DONE]${NC} Update script updated! Restarting with new version..."
+            exec /usr/bin/update "$@"
+        else
+            echo -e "${GREEN}[INFO]${NC} Update script is already up to date."
+            rm -f "$temp_update"
+        fi
+    else
+        echo -e "${YELLOW}[WARN]${NC} Could not check for update script updates."
+        rm -f "$temp_update" 2>/dev/null
+    fi
+}
+
 # Function to show header
 show_header() {
     clear
@@ -33,9 +58,82 @@ show_header() {
     echo ""
 }
 
+# Function to remove deprecated/old files
+remove_deprecated() {
+    echo -e "${YELLOW}[INFO]${NC} Checking for deprecated files..."
+    
+    # List of deprecated files to remove
+    local deprecated_files=(
+        # Add any old/deprecated scripts here
+        # Example: "/usr/bin/old-script"
+    )
+    
+    local removed_count=0
+    for file in "${deprecated_files[@]}"; do
+        if [ -f "$file" ]; then
+            echo -e "${YELLOW}[REMOVE]${NC} Removing deprecated file: $file"
+            rm -f "$file"
+            ((removed_count++))
+        fi
+    done
+    
+    if [ $removed_count -gt 0 ]; then
+        echo -e "${GREEN}[INFO]${NC} Removed $removed_count deprecated file(s)"
+    else
+        echo -e "${GREEN}[INFO]${NC} No deprecated files found"
+    fi
+}
+
+# Function to install/update required services
+manage_services() {
+    echo -e "${YELLOW}[INFO]${NC} Managing system services..."
+    
+    # Ensure host-capture service is properly configured
+    if [ -f /etc/systemd/system/host-capture.service ]; then
+        systemctl daemon-reload
+        systemctl enable host-capture 2>/dev/null
+        if ! systemctl is-active --quiet host-capture; then
+            systemctl start host-capture 2>/dev/null
+            echo -e "${GREEN}[INFO]${NC} Started host-capture service"
+        fi
+    fi
+    
+    # Ensure xray-quota-monitor service is properly configured
+    if [ -f /etc/systemd/system/xray-quota-monitor.service ]; then
+        systemctl daemon-reload
+        systemctl enable xray-quota-monitor 2>/dev/null
+        if ! systemctl is-active --quiet xray-quota-monitor; then
+            systemctl start xray-quota-monitor 2>/dev/null
+            echo -e "${GREEN}[INFO]${NC} Started xray-quota-monitor service"
+        fi
+    fi
+    
+    echo -e "${GREEN}[INFO]${NC} Services managed successfully"
+}
+
+# Function to create necessary directories
+ensure_directories() {
+    local dirs=(
+        "/etc/myvpn"
+        "/etc/myvpn/usage"
+        "/etc/myvpn/blocked_users"
+        "/var/log"
+    )
+    
+    for dir in "${dirs[@]}"; do
+        if [ ! -d "$dir" ]; then
+            mkdir -p "$dir"
+            chmod 755 "$dir"
+        fi
+    done
+}
+
 # Function to update all scripts
 update_all_scripts() {
     echo -e "${YELLOW}[INFO]${NC} Updating all scripts..."
+    
+    # Ensure necessary directories exist
+    ensure_directories
     
     # List of all scripts to update
     local scripts=(
@@ -76,12 +174,22 @@ update_all_scripts() {
         fi
     done
     
+    # Remove deprecated files
+    remove_deprecated
+    
+    # Manage services
+    manage_services
+    
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}Update Summary:${NC}"
     echo -e "  ${GREEN}Success: ${success_count}${NC}"
     echo -e "  ${RED}Failed: ${fail_count}${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    
+    if [ $success_count -gt 0 ]; then
+        echo -e "${GREEN}[INFO]${NC} All necessary features installed and services configured!"
+    fi
 }
 
 # Function to update specific component
@@ -138,10 +246,10 @@ update_component() {
             wget -q -O /usr/bin/capture-host "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/bin/capture-host
             wget -q -O /usr/bin/realtime-hosts "https://${REPO_URL}/realtime-hosts.sh" && chmod +x /usr/bin/realtime-hosts
             wget -q -O /usr/bin/menu-captured-hosts "https://${REPO_URL}/menu-captured-hosts.sh" && chmod +x /usr/bin/menu-captured-hosts
-            # Restart services to apply updates
-            systemctl daemon-reload
-            systemctl restart host-capture 2>/dev/null
-            systemctl restart xray-quota-monitor 2>/dev/null
+            wget -q -O /usr/bin/menu-bandwidth "https://${REPO_URL}/menu-bandwidth.sh" && chmod +x /usr/bin/menu-bandwidth
+            # Manage services and directories
+            ensure_directories
+            manage_services
             echo -e "${GREEN}[DONE]${NC} System utilities updated!"
             ;;
         5)
@@ -163,6 +271,9 @@ update_component() {
 
 # Main menu
 main_menu() {
+    # Self-update first
+    self_update
+    
     show_header
     echo -e "${CYAN}Select update mode:${NC}"
     echo ""

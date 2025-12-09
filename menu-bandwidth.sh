@@ -59,7 +59,7 @@ bytes_to_human() {
 
 # Get user traffic from xray stats API
 # NOTE: Tracking ONLY downlink (client download) divided by 3 to fix overcounting bug.
-# Upload traffic is not measured properly, so we only track download.
+# Upload traffic (uplink) is not tracked because it doesn't report accurately in this VPN setup.
 # The 3x bug occurs because users exist in multiple inbound configurations
 # (ws/grpc/xhttp) and Xray aggregates stats across all of them.
 # We divide by 3 to get accurate single-protocol traffic.

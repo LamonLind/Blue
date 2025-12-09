@@ -176,6 +176,7 @@ capture_ssh_hosts() {
 # These are the most common ways users specify custom domains in Xray protocols
 # Also captures source IP addresses for each connection
 # Enhanced with better regex patterns and more header types
+# Added: tcp: prefixed hosts, ws:// and wss:// URLs, improved patterns for proxy hosts
 capture_xray_hosts() {
     local XRAY_LOG="/var/log/xray/access.log"
     local XRAY_LOG2="/var/log/xray/access2.log"
@@ -196,13 +197,15 @@ capture_xray_hosts() {
             fi
             
             # Extract SNI (Server Name Indication) - multiple patterns
-            local sni=$(echo "$line" | grep -oiP "(sni[=:\s]+|serverName[=:\s]+|server_name[=:\s]+|\"sni\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            # Enhanced: captures bug.cloudflare.com, wibmo.com style SNI hostnames
+            local sni=$(echo "$line" | grep -oiP "(sni[=:\s]+|serverName[=:\s]+|server_name[=:\s]+|\"sni\":\s*\"?|tls[_-]?sni[=:\s]+)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$sni" ] && echo "$sni" | grep -q '[a-zA-Z]'; then
                 add_host "$sni" "SNI" "$source_ip"
             fi
             
             # Extract Proxy Host and X-Forwarded-Host
-            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:\s]+|X-Forwarded-Host:\s*|\"proxyHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            # Enhanced: captures proxy host headers used in HTTP injection
+            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:\s]+|X-Forwarded-Host:\s*|\"proxyHost\":\s*\"?|bug[_-]?host[=:\s]+)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
                 add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
@@ -247,6 +250,39 @@ capture_xray_hosts() {
             if [ -n "$path_host" ] && echo "$path_host" | grep -q '[a-zA-Z]'; then
                 add_host "$path_host" "Query-Host" "$source_ip"
             fi
+            
+            # NEW: Extract tcp: prefixed hosts (e.g., tcp:bug.cloudflare.com:443)
+            # These are used in proxy configurations for TCP-based connections
+            local tcp_host=$(echo "$line" | grep -oiP "tcp:\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$tcp_host" ] && echo "$tcp_host" | grep -q '[a-zA-Z]'; then
+                add_host "$tcp_host" "TCP-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract ws:// and wss:// URL hosts
+            # These are WebSocket URLs that contain the target domain
+            local ws_url_host=$(echo "$line" | grep -oiP "wss?://\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$ws_url_host" ] && echo "$ws_url_host" | grep -q '[a-zA-Z]'; then
+                add_host "$ws_url_host" "WS-URL" "$source_ip"
+            fi
+            
+            # NEW: Extract bug host patterns (bug.cloudflare.com, bug.com style)
+            # These are commonly used as CDN/proxy fronting hosts
+            local bug_host=$(echo "$line" | grep -oiP "bug[=:\s]+\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$bug_host" ] && echo "$bug_host" | grep -q '[a-zA-Z]'; then
+                add_host "$bug_host" "Bug-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract fronting hosts (used for domain fronting)
+            local fronting_host=$(echo "$line" | grep -oiP "(fronting[_-]?host[=:\s]+|front[_-]?host[=:\s]+|\"frontingHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$fronting_host" ] && echo "$fronting_host" | grep -q '[a-zA-Z]'; then
+                add_host "$fronting_host" "Fronting-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract cdn/cloudflare style hosts
+            local cdn_host=$(echo "$line" | grep -oiP "(cdn[_-]?host[=:\s]+|cf[_-]?host[=:\s]+|cloudflare[_-]?host[=:\s]+)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$cdn_host" ] && echo "$cdn_host" | grep -q '[a-zA-Z]'; then
+                add_host "$cdn_host" "CDN-Host" "$source_ip"
+            fi
         done
     fi
     
@@ -262,14 +298,14 @@ capture_xray_hosts() {
                 add_host "$host" "Header-Host" "$source_ip"
             fi
             
-            # Extract SNI
-            local sni=$(echo "$line" | grep -oiP "(sni[=:\s]+|serverName[=:\s]+|server_name[=:\s]+|\"sni\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            # Extract SNI - enhanced patterns
+            local sni=$(echo "$line" | grep -oiP "(sni[=:\s]+|serverName[=:\s]+|server_name[=:\s]+|\"sni\":\s*\"?|tls[_-]?sni[=:\s]+)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$sni" ] && echo "$sni" | grep -q '[a-zA-Z]'; then
                 add_host "$sni" "SNI" "$source_ip"
             fi
             
-            # Extract Proxy Host
-            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:\s]+|X-Forwarded-Host:\s*|\"proxyHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            # Extract Proxy Host - enhanced patterns
+            local proxy_host=$(echo "$line" | grep -oiP "(proxy[_-]?[Hh]ost[=:\s]+|X-Forwarded-Host:\s*|\"proxyHost\":\s*\"?|bug[_-]?host[=:\s]+)\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$proxy_host" ] && echo "$proxy_host" | grep -q '[a-zA-Z]'; then
                 add_host "$proxy_host" "Proxy-Host" "$source_ip"
             fi
@@ -313,6 +349,36 @@ capture_xray_hosts() {
             local path_host=$(echo "$line" | grep -oiP "[\?&]host=\K${HOSTNAME_PATTERN}" | head -1)
             if [ -n "$path_host" ] && echo "$path_host" | grep -q '[a-zA-Z]'; then
                 add_host "$path_host" "Query-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract tcp: prefixed hosts
+            local tcp_host=$(echo "$line" | grep -oiP "tcp:\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$tcp_host" ] && echo "$tcp_host" | grep -q '[a-zA-Z]'; then
+                add_host "$tcp_host" "TCP-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract ws:// and wss:// URL hosts
+            local ws_url_host=$(echo "$line" | grep -oiP "wss?://\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$ws_url_host" ] && echo "$ws_url_host" | grep -q '[a-zA-Z]'; then
+                add_host "$ws_url_host" "WS-URL" "$source_ip"
+            fi
+            
+            # NEW: Extract bug host patterns
+            local bug_host=$(echo "$line" | grep -oiP "bug[=:\s]+\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$bug_host" ] && echo "$bug_host" | grep -q '[a-zA-Z]'; then
+                add_host "$bug_host" "Bug-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract fronting hosts
+            local fronting_host=$(echo "$line" | grep -oiP "(fronting[_-]?host[=:\s]+|front[_-]?host[=:\s]+|\"frontingHost\":\s*\"?)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$fronting_host" ] && echo "$fronting_host" | grep -q '[a-zA-Z]'; then
+                add_host "$fronting_host" "Fronting-Host" "$source_ip"
+            fi
+            
+            # NEW: Extract cdn/cloudflare style hosts
+            local cdn_host=$(echo "$line" | grep -oiP "(cdn[_-]?host[=:\s]+|cf[_-]?host[=:\s]+|cloudflare[_-]?host[=:\s]+)\K${HOSTNAME_PATTERN}" | head -1)
+            if [ -n "$cdn_host" ] && echo "$cdn_host" | grep -q '[a-zA-Z]'; then
+                add_host "$cdn_host" "CDN-Host" "$source_ip"
             fi
         done
     fi

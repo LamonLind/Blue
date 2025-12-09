@@ -57,14 +57,21 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
 - Easy quota management via command-line tools
 - Supports GB, MB, TB units
 - Real-time traffic monitoring
+- **NEW: User quota reset** - Reset bandwidth usage and re-enable users
+- **NEW: Automatic Xray restart** after quota reset
 - See [BANDWIDTH_QUOTA_GUIDE.md](BANDWIDTH_QUOTA_GUIDE.md) for details
+- See [USER_QUOTA_RESET_GUIDE.md](USER_QUOTA_RESET_GUIDE.md) for reset feature
 
 ### 📡 Host Capture System
 - Captures all incoming hosts/domains from VPN connections
 - Tracks source IP addresses
 - Prevents duplicate entries
 - Real-time monitoring with 2-second intervals
+- **NEW: Systemd service daemon** for continuous 24/7 monitoring
+- **NEW: Full root access** for comprehensive log scanning
+- **NEW: Enhanced patterns** - TCP, WebSocket, Bug hosts, CDN hosts
 - See [HOST_CAPTURE_GUIDE.md](HOST_CAPTURE_GUIDE.md) for details
+- See [HOST_CAPTURE_SERVICE_GUIDE.md](HOST_CAPTURE_SERVICE_GUIDE.md) for service details
 
 ♦️ Installation Link <br>
 

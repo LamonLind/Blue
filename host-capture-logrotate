@@ -1,0 +1,17 @@
+# Logrotate configuration for Host Capture Service
+# Prevents log file from growing too large
+# Rotates weekly, keeps 4 weeks of logs
+
+/var/log/host-capture-service.log {
+    weekly
+    rotate 4
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0644 root root
+    sharedscripts
+    postrotate
+        systemctl reload host-capture > /dev/null 2>&1 || true
+    endscript
+}

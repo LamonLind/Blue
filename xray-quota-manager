@@ -144,6 +144,92 @@ get_user_traffic() {
     echo $(( uplink + downlink_div3 ))
 }
 
+# Reset user bandwidth usage statistics
+# This resets the xray stats for both uplink and downlink
+reset_user_stats() {
+    local email="$1"
+    local _Xray="/usr/local/bin/xray"
+    
+    # Check if xray exists and is executable
+    if [ ! -x "$_Xray" ]; then
+        echo -e "${RED}✗ Xray binary not found or not executable${NC}"
+        return 1
+    fi
+    
+    # Reset uplink stats
+    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Warning: Failed to reset uplink statistics${NC}"
+    fi
+    
+    # Reset downlink stats
+    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Warning: Failed to reset downlink statistics${NC}"
+    fi
+    
+    echo -e "${GREEN}✓ Statistics reset for $email${NC}"
+}
+
+# Reset user quota and enable them
+# This function:
+# 1. Resets bandwidth usage statistics via Xray API
+# 2. Re-enables user in quota config (if disabled)
+# 3. Restarts Xray service to apply changes
+reset_user_quota() {
+    local email="$1"
+    
+    # Check if user has a quota entry
+    if ! has_quota "$email"; then
+        echo -e "${YELLOW}⚠ User $email does not have a quota configured${NC}"
+        echo -e "${YELLOW}  You can set a quota with: $0 set $email <quota>${NC}"
+        return 1
+    fi
+    
+    # Get current quota info
+    local quota=$(get_quota "$email")
+    local quota_status=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f3)
+    
+    echo -e "${BLUE}=== Resetting User Quota ===${NC}"
+    echo -e "User: ${YELLOW}$email${NC}"
+    echo -e "Quota Limit: ${YELLOW}$(bytes_to_human $quota)${NC}"
+    echo -e "Current Status: ${YELLOW}$quota_status${NC}"
+    echo ""
+    
+    # Step 1: Reset statistics
+    echo -e "${INFO} Resetting bandwidth statistics..."
+    reset_user_stats "$email"
+    
+    # Step 2: Re-enable in quota config if disabled
+    if [ "$quota_status" != "true" ]; then
+        echo -e "${INFO} Re-enabling user in quota config..."
+        # Use mktemp for safer file manipulation
+        local tmpfile=$(mktemp)
+        awk -v email="$email" -F'|' '
+            $1 == email { $3 = "true" }
+            { print $1 FS $2 FS $3 }
+        ' "$QUOTA_CONF" > "$tmpfile" && mv "$tmpfile" "$QUOTA_CONF"
+        echo -e "${GREEN}✓ User re-enabled in quota config${NC}"
+    else
+        echo -e "${GREEN}✓ User already enabled in quota config${NC}"
+    fi
+    
+    # Step 3: Restart Xray service
+    echo -e "${INFO} Restarting Xray service to apply changes..."
+    if systemctl restart xray 2>/dev/null; then
+        echo -e "${GREEN}✓ Xray service restarted successfully${NC}"
+    else
+        echo -e "${RED}✗ Failed to restart Xray service${NC}"
+        echo -e "${YELLOW}  Please restart manually: systemctl restart xray${NC}"
+        return 1
+    fi
+    
+    echo ""
+    echo -e "${GREEN}=== Quota Reset Complete ===${NC}"
+    echo -e "${GREEN}✓ User $email has been reset and re-enabled${NC}"
+    echo -e "${GREEN}✓ Bandwidth usage statistics cleared${NC}"
+    echo -e "${GREEN}✓ Quota limit maintained: $(bytes_to_human $quota)${NC}"
+    echo ""
+}
+
 # Show usage for a specific user
 show_usage() {
     local email="$1"
@@ -268,6 +354,15 @@ case "$1" in
         show_usage "$2"
         ;;
     
+    reset)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 reset <email>${NC}"
+            echo -e "Example: $0 reset user@example.com"
+            exit 1
+        fi
+        reset_user_quota "$2"
+        ;;
+    
     *)
         echo -e "${BLUE}Xray Quota Manager (3x-ui style)${NC}"
         echo -e "\nUsage: $0 <command> [options]"
@@ -277,9 +372,11 @@ case "$1" in
         echo -e "  get <email>           - Get quota for user"
         echo -e "  usage <email>         - Show current bandwidth usage"
         echo -e "  list                  - List all quotas with usage"
+        echo -e "  reset <email>         - Reset quota usage and re-enable user"
         echo -e "\nExamples:"
         echo -e "  $0 set user@test.com 10GB"
         echo -e "  $0 usage user@test.com"
+        echo -e "  $0 reset user@test.com"
         echo -e "  $0 list"
         exit 1
         ;;

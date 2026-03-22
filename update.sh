@@ -129,52 +129,19 @@ manage_services() {
         echo -e " ${RED}✗${NC}"
     fi
     
-    # Download and install host-capture service file
-    echo -ne "${CYAN}Updating host-capture.service...${NC}"
-    if wget -q -O /etc/systemd/system/host-capture.service "https://${REPO_URL}/host-capture.service"; then
-        echo -e " ${GREEN}✓${NC}"
-    else
-        echo -e " ${RED}✗${NC}"
+    # Remove old host-capture service (replaced by on-demand config extraction)
+    if systemctl is-active --quiet host-capture 2>/dev/null; then
+        systemctl stop host-capture 2>/dev/null
+        systemctl disable host-capture 2>/dev/null
     fi
+    rm -f /etc/systemd/system/host-capture.service
+    rm -f /etc/logrotate.d/host-capture
+    rm -f /usr/local/bin/capture-host-daemon.sh
+    rm -f /etc/cron.d/capture_host
     
-    # Download and install logrotate config for host-capture
-    echo -ne "${CYAN}Updating host-capture logrotate...${NC}"
-    if wget -q -O /etc/logrotate.d/host-capture "https://${REPO_URL}/host-capture-logrotate"; then
-        echo -e " ${GREEN}✓${NC}"
-    else
-        echo -e " ${RED}✗${NC}"
-    fi
-    
-    # Download capture-host-daemon.sh
-    echo -ne "${CYAN}Updating capture-host-daemon...${NC}"
-    if wget -q -O /usr/local/bin/capture-host-daemon.sh "https://${REPO_URL}/capture-host-daemon.sh"; then
-        chmod +x /usr/local/bin/capture-host-daemon.sh
-        echo -e " ${GREEN}✓${NC}"
-    else
-        echo -e " ${RED}✗${NC}"
-    fi
-    
-    # Ensure capture-host.sh is in /usr/local/bin if it exists in /usr/bin
-    # Only copy if /usr/bin version is newer or /usr/local/bin doesn't exist
-    if [ -f /usr/bin/capture-host ]; then
-        if [ ! -f /usr/local/bin/capture-host.sh ] || [ /usr/bin/capture-host -nt /usr/local/bin/capture-host.sh ]; then
-            cp /usr/bin/capture-host /usr/local/bin/capture-host.sh
-            chmod +x /usr/local/bin/capture-host.sh
-        fi
-    fi
-    
-    # Ensure host-capture service is properly configured
-    if [ -f /etc/systemd/system/host-capture.service ]; then
-        systemctl daemon-reload
-        systemctl enable host-capture 2>/dev/null
-        if ! systemctl is-active --quiet host-capture; then
-            systemctl start host-capture 2>/dev/null
-            echo -e "${GREEN}[INFO]${NC} Started host-capture service"
-        else
-            systemctl restart host-capture 2>/dev/null
-            echo -e "${GREEN}[INFO]${NC} Restarted host-capture service"
-        fi
-    fi
+    # Ensure hosts file exists for universal host capture
+    mkdir -p /etc/myvpn 2>/dev/null
+    touch /etc/myvpn/hosts.log 2>/dev/null
     
     # Ensure xray-quota-monitor service is properly configured
     if [ -f /etc/systemd/system/xray-quota-monitor.service ]; then

@@ -7,12 +7,10 @@
 # =========================================
 #
 # Changelog:
-# - Fixed bandwidth quota tracking: Now tracks upload normally and download/3 for accuracy
-#   Root cause: Only downlink has 3x overcounting bug from multiple inbound configs
-#   Fix: Track uplink (normal) + downlink/3 for accurate total bandwidth measurement
+# - Fixed bandwidth quota tracking: Now correctly records full uplink + downlink usage
+#   Fix: Track uplink + downlink accurately (no incorrect division applied)
 #   Enhancement: Now displays upload and download traffic separately for better visibility
-#   Formula: uplink + (downlink / 3)
-#   The /3 division only applies to downlink due to ws/grpc/xhttp aggregation
+#   Formula: uplink + downlink
 #   Affected files: xray-quota-manager, xray-traffic-monitor, menu-bandwidth.sh
 #
 # - Enhanced host capture system: Now captures more hostname patterns

@@ -136,11 +136,26 @@ setup_cloudflare_wildcard_dns() {
 
     echo -e " ${INFO} Setting up Cloudflare DNS records for ${BIWhite}${domain}${NC} -> ${BIWhite}${server_ip}${NC}..."
 
-    # Get zone ID (use jq for reliable JSON parsing)
-    local zone_id
-    zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${domain}&status=active" \
-        -H "Authorization: Bearer ${cf_token}" \
-        -H "Content-Type: application/json" | jq -r '.result[0].id // empty' 2>/dev/null)
+    # Get zone ID: try the domain itself, then progressively strip subdomains
+    # so that entering e.g. "sd.example.com" correctly finds zone "example.com".
+    local zone_id=""
+    local lookup_domain="$domain"
+    while [ -z "$zone_id" ]; do
+        zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${lookup_domain}&status=active" \
+            -H "Authorization: Bearer ${cf_token}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id // empty' 2>/dev/null)
+        # Stop if found or if we've run out of parent domains to try
+        if [ -n "$zone_id" ]; then
+            break
+        fi
+        # Strip the leftmost label (e.g. "sd.example.com" -> "example.com")
+        local parent="${lookup_domain#*.}"
+        # Stop if stripping didn't change anything (already at root) or no dot remains
+        if [ "$parent" = "$lookup_domain" ] || [[ ! "$parent" =~ \. ]]; then
+            break
+        fi
+        lookup_domain="$parent"
+    done
 
     if [ -z "$zone_id" ]; then
         echo -e " ${EROR} Could not retrieve Cloudflare zone ID for ${domain}."

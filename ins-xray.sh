@@ -224,6 +224,15 @@ vmexxhttp=$((RANDOM + 10000))
 
 # nginx xray.conf
 rm -fr /etc/nginx/conf.d/xray.conf
+# Determine server_name: use wildcard domain if configured, else use /etc/xray/domain
+if [ -f /etc/xray/wildcard.conf ]; then
+    source /etc/xray/wildcard.conf
+    NGINX_SERVER_NAME="*.${WILDCARD_BASE_DOMAIN} ${WILDCARD_BASE_DOMAIN}"
+elif [ -f /etc/xray/domain ]; then
+    NGINX_SERVER_NAME="$(cat /etc/xray/domain)"
+else
+    NGINX_SERVER_NAME="127.0.0.1 localhost"
+fi
 cat >/etc/nginx/conf.d/xray.conf <<EOF
     server {
              # Non-TLS (HTTP/WS) ports - Cloudflare compatible
@@ -254,7 +263,7 @@ cat >/etc/nginx/conf.d/xray.conf <<EOF
              listen [::]:2096 ssl http2;
              listen 8443 ssl http2;
              listen [::]:8443 ssl http2;
-             server_name 127.0.0.1 localhost;
+             server_name ${NGINX_SERVER_NAME};
              ssl_certificate /etc/xray/xray.crt;
              ssl_certificate_key /etc/xray/xray.key;
              ssl_ciphers EECDH+CHACHA20:EECDH+CHACHA20-draft:EECDH+ECDSA+AES128:EECDH+aRSA+AES128:RSA+AES128:EECDH+ECDSA+AES256:EECDH+aRSA+AES256:RSA+AES256:EECDH+ECDSA+3DES:EECDH+aRSA+3DES:RSA+3DES:!MD5;

@@ -532,19 +532,10 @@ show_nginx_config() {
 # XFwdHost carries the original Host header forwarded by CDN even when SNI is absent.
 log_format proxy_capture
     '$remote_addr [$time_local] "$request" $status '
-    'XFF:"$http_x_forwarded_for" '
-    'RealIP:"$http_x_real_ip" '
-    'Host:"$http_host" '
-    'SNI:"$ssl_server_name" '
-    'ProxyHost:"$proxy_host" '
-    'UpstreamAddr:"$upstream_addr" '
-    'XFwdHost:"$http_x_forwarded_host" '
-    'BunnyCDN:"$http_cdn_requestcountrycode" '
-    'VercelFWD:"$http_x_vercel_forwarded_for" '
-    'CFConnecting:"$http_cf_connecting_ip" '
-    'CFRay:"$http_cf_ray" '
-    'NFClient:"$http_x_nf_client_connection_ip" '
-    'RenderFWD:"$http_render_forwarding_ip"';
+    'XFF:"$http_x_forwarded_for" RealIP:"$http_x_real_ip" Host:"$http_host" SNI:"$ssl_server_name" '
+    'ProxyHost:"$proxy_host" UpstreamAddr:"$upstream_addr" XFwdHost:"$http_x_forwarded_host" '
+    'BunnyCDN:"$http_cdn_requestcountrycode" VercelFWD:"$http_x_vercel_forwarded_for" CFConnecting:"$http_cf_connecting_ip" '
+    'CFRay:"$http_cf_ray" NFClient:"$http_x_nf_client_connection_ip" RenderFWD:"$http_render_forwarding_ip"';
 
 # Apply this log format to your server block:
 # access_log /var/log/nginx/proxy-capture.log proxy_capture;
@@ -577,19 +568,10 @@ apply_nginx_config() {
     # Proxy host capture log format - reveals client proxy entry point via XFF chain
     log_format proxy_capture
         '"'"'$remote_addr [$time_local] "$request" $status '"'"'
-        '"'"'XFF:"$http_x_forwarded_for" '"'"'
-        '"'"'RealIP:"$http_x_real_ip" '"'"'
-        '"'"'Host:"$http_host" '"'"'
-        '"'"'SNI:"$ssl_server_name" '"'"'
-        '"'"'ProxyHost:"$proxy_host" '"'"'
-        '"'"'UpstreamAddr:"$upstream_addr" '"'"'
-        '"'"'XFwdHost:"$http_x_forwarded_host" '"'"'
-        '"'"'BunnyCDN:"$http_cdn_requestcountrycode" '"'"'
-        '"'"'VercelFWD:"$http_x_vercel_forwarded_for" '"'"'
-        '"'"'CFConnecting:"$http_cf_connecting_ip" '"'"'
-        '"'"'CFRay:"$http_cf_ray" '"'"'
-        '"'"'NFClient:"$http_x_nf_client_connection_ip" '"'"'
-        '"'"'RenderFWD:"$http_render_forwarding_ip"'"'"';'
+        '"'"'XFF:"$http_x_forwarded_for" RealIP:"$http_x_real_ip" Host:"$http_host" SNI:"$ssl_server_name" '"'"'
+        '"'"'ProxyHost:"$proxy_host" UpstreamAddr:"$upstream_addr" XFwdHost:"$http_x_forwarded_host" '"'"'
+        '"'"'BunnyCDN:"$http_cdn_requestcountrycode" VercelFWD:"$http_x_vercel_forwarded_for" CFConnecting:"$http_cf_connecting_ip" '"'"'
+        '"'"'CFRay:"$http_cf_ray" NFClient:"$http_x_nf_client_connection_ip" RenderFWD:"$http_render_forwarding_ip"'"'"';'
 
     # Use awk to insert before the last closing brace of http block
     cp "$NGINX_CONF" /tmp/nginx_proxy.conf.bak

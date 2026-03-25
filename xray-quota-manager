@@ -437,7 +437,7 @@ legacy_set() {
     local username="$2"
     local limit_input="$3"
     local uuid="$4"
-    [ -z "$username" ] || [ -z "$limit_input" ] && { echo -e "${RED}Usage: $0 set <username> <limit>${NC}"; exit 1; }
+    [ -z "$username" ] || [ -z "$limit_input" ] && { echo -e "${RED}Usage: $0 set <username> <limit> [uuid]${NC}"; exit 1; }
     local existing_uuid
     existing_uuid=$(find_uuid_by_username "$username")
     if [ -n "$existing_uuid" ]; then
@@ -546,7 +546,7 @@ case "$1" in
         echo "  delete <username|uuid>"
         echo "  extend <username|uuid> <days>"
         echo "  set-limit <username|uuid> <limit>"
-        echo "  set <username> <limit>         (legacy)"
+        echo "  set <username> <limit> [uuid]  (legacy)"
         echo "  get <username|uuid>            (legacy)"
         echo "  remove <username|uuid>         (legacy remove record only)"
         echo "  enforce"

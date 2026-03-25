@@ -710,18 +710,25 @@ sync_missing_users() {
     local tmp_db
     tmp_db=$(mktemp)
     if [ -f "$DB_PATH" ]; then
-        cp "$DB_PATH" "$tmp_db"
+        if ! cp "$DB_PATH" "$tmp_db"; then
+            log_msg "WARN" "Failed to copy quota DB; syncing from empty database."
+            echo '{"users":[]}' > "$tmp_db"
+        fi
     else
         echo '{"users":[]}' > "$tmp_db"
     fi
-    local existing_users
-    existing_users=$(jq -r '.users[]?.username' "$tmp_db")
+    local -A existing_users
+    while IFS= read -r existing_user; do
+        if [ -n "$existing_user" ]; then
+            existing_users["$existing_user"]=1
+        fi
+    done < <(jq -r '.users[]?.username' "$tmp_db")
     local added=0
     while IFS='|' read -r user protocol expiry uuid; do
         if [ -z "$user" ]; then
             continue
         fi
-        if ! grep -Fxq "$user" <<< "$existing_users"; then
+        if [ -z "${existing_users[$user]+x}" ]; then
             jq --arg user "$user" \
                 --arg protocol "$protocol" \
                 --arg uuid "$uuid" \
@@ -743,7 +750,7 @@ sync_missing_users() {
                     configs: {}
                 }]' "$tmp_db" > "${tmp_db}.next" && mv "${tmp_db}.next" "$tmp_db"
             added=$((added + 1))
-            existing_users="${existing_users}"$'\n'"$user"
+            existing_users["$user"]=1
         fi
     done < <(config_user_records)
     if [ "$added" -gt 0 ]; then

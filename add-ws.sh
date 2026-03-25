@@ -96,8 +96,24 @@ menu
 	done
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
-read -p "Expired (days): " masaaktif
-exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+while true; do
+    read -rp "Bandwidth limit (GB, 0=unlimited): " quota_gb
+    if [[ "$quota_gb" =~ ^[0-9]+$ ]] && [ "$quota_gb" -ge 0 ] && [ "$quota_gb" -le 10000 ]; then
+        break
+    fi
+    echo "Please enter a valid limit between 0 and 10000."
+done
+read -p "Expired (days or YYYY-MM-DD): " masaaktif
+if [[ "$masaaktif" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    exp="$masaaktif"
+else
+    exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+fi
+if [ "$quota_gb" -eq 0 ]; then
+    quota_label="Unlimited"
+else
+    quota_label="${quota_gb} GB"
+fi
 
 sed -i '/#vmess$/a\#vms '"$user $exp"'\
 },{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
@@ -260,6 +276,16 @@ vmesslink6="vmess://$(echo $ama | base64 -w 0)"
 vmesslink7="vmess://$(echo $ami | base64 -w 0)"
 vmesslink8="vmess://$(echo $xhttp_tls | base64 -w 0)"
 vmesslink9="vmess://$(echo $xhttp_ntls | base64 -w 0)"
+if command -v xray-quota-manager >/dev/null 2>&1; then
+    configs_json=$(jq -nc \
+        --arg ws_tls "$vmesslink1" \
+        --arg ws_ntls "$vmesslink2" \
+        --arg grpc "$vmesslink5" \
+        --arg xhttp_tls "$vmesslink8" \
+        --arg xhttp_ntls "$vmesslink9" \
+        '{ws_tls:$ws_tls,ws_ntls:$ws_ntls,grpc:$grpc,xhttp_tls:$xhttp_tls,xhttp_ntls:$xhttp_ntls}')
+    xray-quota-manager register "$user" "vmess" "$uuid" "$exp" "$quota_gb" "$configs_json" >/dev/null 2>&1
+fi
 cat > /home/vps/public_html/vmess-$user.txt <<-END
 ====================================================================
              P R O J E C T  O F  L A M O N L I N D
@@ -275,6 +301,8 @@ _______________________________________________________
 _______________________________________________________
 Username/Email : $user
 Expired On : $exp
+Bandwidth Limit : $quota_label
+Bandwidth Used : 0 GB
 _______________________________________________________
               Link Vmess Account
 _______________________________________________________
@@ -330,6 +358,8 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "Link XHTTP none TLS : ${vmesslink9}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link Vmess Config : http://${domain}:81/vmess-$user.txt" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "Bandwidth : ${quota_label} (0 GB used)" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log

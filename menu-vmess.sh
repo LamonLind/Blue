@@ -152,6 +152,9 @@ NUMBER_OF_CLIENTS=$(grep -c -E "^#vmsg " "/etc/xray/config.json")
     sed -i "/#vmsg $user/c\#vmsg $user $exp4" /etc/xray/config.json
     sed -i "/#vms $user/c\#vms $user $exp4" /etc/xray/config.json
     systemctl restart xray > /dev/null 2>&1
+    if command -v xray-quota-manager >/dev/null 2>&1; then
+        xray-quota-manager set-expiry "$user" "$exp4" >/dev/null 2>&1
+    fi
     clear
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo " VMESS Account Was Successfully Renewed"
@@ -198,9 +201,12 @@ sed -i "/^#vmsx $user $exp/,/^},{/d" /etc/xray/config.json
 # Also delete ### entries used for special vmess endpoints (worryfree and quota-habis paths)
 # These are alternate paths configured in add-ws.sh for specific use cases
 sed -i "/^### $user $exp/,/^},{/d" /etc/xray/config.json
-rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
-rm -f /home/vps/public_html/vmess-$user.txt
-systemctl restart xray.service
+    rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
+    rm -f /home/vps/public_html/vmess-$user.txt
+    systemctl restart xray.service
+    if command -v xray-quota-manager >/dev/null 2>&1; then
+        xray-quota-manager remove-db "$user" >/dev/null 2>&1
+    fi
 clear
 echo ""
 echo "==============================="

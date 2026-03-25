@@ -1,0 +1,796 @@
+#!/usr/bin/env bash
+
+DB_PATH="/etc/xray/user-quotas.json"
+CONFIG_PATH="/etc/xray/config.json"
+LOG_PATH="/var/log/xray/quota.log"
+BACKUP_DIR="/etc/xray/backup"
+QUOTA_CONF="/etc/xray/quota.conf"
+XRAY_API="127.0.0.1:10085"
+XRAY_BIN=""
+WEBHOOK_URL=""
+OVERAGE_PERCENT=0
+
+log_msg() {
+    local level="$1"
+    local message="$2"
+    mkdir -p "$(dirname "$LOG_PATH")" 2>/dev/null
+    printf "%s [%s] %s\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$level" "$message" >> "$LOG_PATH"
+}
+
+load_quota_config() {
+    if [ -f "$QUOTA_CONF" ]; then
+        # shellcheck disable=SC1090
+        source "$QUOTA_CONF"
+    fi
+}
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Missing required command: $1"
+        exit 1
+    }
+}
+
+resolve_xray_bin() {
+    if command -v xray >/dev/null 2>&1; then
+        XRAY_BIN="$(command -v xray)"
+    elif [ -x /usr/local/bin/xray ]; then
+        XRAY_BIN="/usr/local/bin/xray"
+    elif [ -x /usr/bin/xray ]; then
+        XRAY_BIN="/usr/bin/xray"
+    else
+        XRAY_BIN=""
+        log_msg "WARN" "Xray executable not found; usage stats unavailable."
+    fi
+}
+
+db_init() {
+    mkdir -p "$(dirname "$DB_PATH")" "$BACKUP_DIR" 2>/dev/null
+    if [ ! -f "$DB_PATH" ]; then
+        echo '{"users":[]}' > "$DB_PATH"
+    fi
+    if ! jq empty "$DB_PATH" >/dev/null 2>&1; then
+        log_msg "WARN" "Quota DB invalid; rebuilding from config."
+        rebuild_db
+    fi
+}
+
+backup_db() {
+    mkdir -p "$BACKUP_DIR" 2>/dev/null
+    cp "$DB_PATH" "$BACKUP_DIR/user-quotas-$(date -u +"%Y%m%dT%H%M%SZ").json" 2>/dev/null
+}
+
+backup_config() {
+    mkdir -p "$BACKUP_DIR" 2>/dev/null
+    if [ -f "$CONFIG_PATH" ]; then
+        cp "$CONFIG_PATH" "$BACKUP_DIR/config-$(date -u +"%Y%m%dT%H%M%SZ").json" 2>/dev/null
+    fi
+}
+
+gb_to_bytes() {
+    local gb="$1"
+    echo $((gb * 1024 * 1024 * 1024))
+}
+
+bytes_to_gb() {
+    local bytes="$1"
+    if [ "$bytes" -le 0 ]; then
+        echo "0.0"
+        return
+    fi
+    echo "scale=1; $bytes/1073741824" | bc
+}
+
+format_limit() {
+    local limit_bytes="$1"
+    if [ "$limit_bytes" -le 0 ]; then
+        echo "Unlimited"
+    else
+        printf "%s GB" "$(bytes_to_gb "$limit_bytes")"
+    fi
+}
+
+format_remaining() {
+    local remaining_bytes="$1"
+    if [ "$remaining_bytes" -lt 0 ]; then
+        remaining_bytes=0
+    fi
+    if [ "$remaining_bytes" -eq -1 ]; then
+        echo "∞"
+    else
+        printf "%s GB" "$(bytes_to_gb "$remaining_bytes")"
+    fi
+}
+
+validate_limit_gb() {
+    local limit="$1"
+    if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    if [ "$limit" -lt 0 ] || [ "$limit" -gt 10000 ]; then
+        return 1
+    fi
+    return 0
+}
+
+statsquery_sum() {
+    local pattern="$1"
+    local reset_flag="$2"
+    if [ -z "$XRAY_BIN" ]; then
+        echo 0
+        return 1
+    fi
+    local args=(api statsquery --server="$XRAY_API" --pattern "$pattern")
+    if [ "$reset_flag" = "1" ]; then
+        args+=( -reset )
+    fi
+    local output
+    if ! output=$("$XRAY_BIN" "${args[@]}" 2>/dev/null); then
+        log_msg "WARN" "Statsquery failed for pattern ${pattern}"
+        echo 0
+        return 1
+    fi
+    local sum
+    sum=$(echo "$output" | jq -r '[.stat[]?.value // 0] | add // 0' 2>/dev/null)
+    echo "${sum:-0}"
+}
+
+get_user_usage() {
+    local user="$1"
+    local record
+    record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
+    if [ -z "$record" ]; then
+        echo "0|0|0|0"
+        return 1
+    fi
+    local stored limit
+    stored=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
+    limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
+    local uplink downlink
+    uplink=$(statsquery_sum "user>>>${user}>>>traffic>>>uplink" 0)
+    downlink=$(statsquery_sum "user>>>${user}>>>traffic>>>downlink" 0)
+    local current_total=$((uplink + downlink))
+    local total_used=$((stored + current_total))
+    local remaining=-1
+    local percent=0
+    if [ "$limit" -gt 0 ]; then
+        remaining=$((limit - total_used))
+        if [ "$remaining" -lt 0 ]; then
+            remaining=0
+        fi
+        percent=$(echo "scale=0; ($total_used * 100) / $limit" | bc)
+    fi
+    echo "${total_used}|${limit}|${remaining}|${percent}"
+}
+
+update_account_usage() {
+    local user="$1"
+    local delta_up delta_down
+    delta_up=$(statsquery_sum "user>>>${user}>>>traffic>>>uplink" 1)
+    delta_down=$(statsquery_sum "user>>>${user}>>>traffic>>>downlink" 1)
+    local delta_total=$((delta_up + delta_down))
+    if [ "$delta_total" -le 0 ]; then
+        return
+    fi
+    local tmp
+    tmp=$(mktemp)
+    jq --arg user "$user" --argjson delta "$delta_total" '
+        (.users[] | select(.username==$user) | .bandwidth.used_bytes) += $delta
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+register_account() {
+    local user="$1"
+    local protocol="$2"
+    local uuid="$3"
+    local expiry="$4"
+    local limit_gb="$5"
+    local configs_json="${6:-{}}"
+    if ! validate_limit_gb "$limit_gb"; then
+        echo "Invalid bandwidth limit."
+        return 1
+    fi
+    if jq -e --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH" >/dev/null; then
+        echo "User already exists in quota DB."
+        return 1
+    fi
+    local limit_bytes
+    if [ "$limit_gb" -eq 0 ]; then
+        limit_bytes=0
+    else
+        limit_bytes=$(gb_to_bytes "$limit_gb")
+    fi
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" \
+        --arg protocol "$protocol" \
+        --arg uuid "$uuid" \
+        --arg expiry "$expiry" \
+        --arg created "$now" \
+        --argjson limit_bytes "$limit_bytes" \
+        --argjson configs "$configs_json" \
+        '.users += [{
+            id: $uuid,
+            username: $user,
+            email: $user,
+            protocol: $protocol,
+            created: $created,
+            expiry: $expiry,
+            bandwidth: {
+                limit_bytes: $limit_bytes,
+                used_bytes: 0,
+                last_reset: $created
+            },
+            status: "active",
+            configs: $configs
+        }]' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+set_expiry() {
+    local user="$1"
+    local expiry="$2"
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --arg expiry "$expiry" '
+        (.users[] | select(.username==$user) | .expiry) = $expiry
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+set_limit() {
+    local user="$1"
+    local limit_gb="$2"
+    if ! validate_limit_gb "$limit_gb"; then
+        echo "Invalid bandwidth limit."
+        return 1
+    fi
+    local limit_bytes
+    if [ "$limit_gb" -eq 0 ]; then
+        limit_bytes=0
+    else
+        limit_bytes=$(gb_to_bytes "$limit_gb")
+    fi
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --argjson limit_bytes "$limit_bytes" '
+        (.users[] | select(.username==$user) | .bandwidth.limit_bytes) = $limit_bytes
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+extend_limit() {
+    local user="$1"
+    local extra_gb="$2"
+    if ! validate_limit_gb "$extra_gb"; then
+        echo "Invalid bandwidth limit."
+        return 1
+    fi
+    local limit_bytes
+    limit_bytes=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .bandwidth.limit_bytes' "$DB_PATH")
+    if [ "$limit_bytes" -le 0 ]; then
+        echo "User has unlimited bandwidth."
+        return 1
+    fi
+    local extra_bytes
+    extra_bytes=$(gb_to_bytes "$extra_gb")
+    local new_limit=$((limit_bytes + extra_bytes))
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --argjson new_limit "$new_limit" '
+        (.users[] | select(.username==$user) | .bandwidth.limit_bytes) = $new_limit
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+remove_user_from_config() {
+    local user="$1"
+    local protocol="$2"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    backup_config
+    case "$protocol" in
+        vless)
+            sed -i "/^#vlsg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vlsx $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vls $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        vmess)
+            sed -i "/^#vmsg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vmsx $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vms $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^### $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        trojan)
+            sed -i "/^#trg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#tr $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        ss)
+            sed -i "/^#sswg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#ssw $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        socks)
+            sed -i "/^#ssg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#ss $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        *)
+            return
+            ;;
+    esac
+    systemctl restart xray >/dev/null 2>&1
+}
+
+add_user_to_config() {
+    local user="$1"
+    local protocol="$2"
+    local uuid="$3"
+    local expiry="$4"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    case "$protocol" in
+        vless)
+            if grep -q "^#vls $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#vless$/a\#vls '"$user $expiry"'\
+},{"id": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vlessgrpc$/a\#vlsg '"$user $expiry"'\
+},{"id": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vlessxhttp$/a\#vlsx '"$user $expiry"'\
+},{"id": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        vmess)
+            if grep -q "^#vms $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#vmess$/a\#vms '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmessworry$/a\### '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmesskuota$/a\### '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmessgrpc$/a\#vmsg '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmexxhttp$/a\#vmsx '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        trojan)
+            if grep -q "^#tr $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#trojanws$/a\#tr '"$user $expiry"'\
+},{"password": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#trojangrpc$/a\#trg '"$user $expiry"'\
+},{"password": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        ss)
+            if grep -q "^#ssw $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#ssws$/a\#ssw '"$user $expiry"'\
+},{"password": "'"$uuid"'","method": "aes-128-gcm","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#ssgrpc$/a\#sswg '"$user $expiry"'\
+},{"password": "'"$uuid"'","method": "aes-128-gcm","email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        socks)
+            if grep -q "^#ss $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#socksws$/a\#ss '"$user $expiry"'\
+},{"user": "'"$user"'","pass": "'"$uuid"'"}' "$CONFIG_PATH"
+            sed -i '/#socksgrpc$/a\#ssg '"$user $expiry"'\
+},{"user": "'"$user"'","pass": "'"$uuid"'"}' "$CONFIG_PATH"
+            ;;
+        *)
+            return
+            ;;
+    esac
+    systemctl restart xray >/dev/null 2>&1
+}
+
+disable_user() {
+    local user="$1"
+    local reason="${2:-quota}"
+    local protocol
+    protocol=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .protocol' "$DB_PATH")
+    if [ -z "$protocol" ] || [ "$protocol" = "null" ]; then
+        return 1
+    fi
+    remove_user_from_config "$user" "$protocol"
+    local status="disabled"
+    if [ "$reason" = "expired" ]; then
+        status="expired"
+    fi
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --arg status "$status" --arg reason "$reason" '
+        (.users[] | select(.username==$user) | .status) = $status
+        | (.users[] | select(.username==$user) | .disabled_reason) = $reason
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    log_msg "INFO" "User ${user} disabled (reason: ${reason})."
+}
+
+enable_user() {
+    local user="$1"
+    local protocol uuid expiry
+    protocol=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .protocol' "$DB_PATH")
+    uuid=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .id' "$DB_PATH")
+    expiry=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .expiry' "$DB_PATH")
+    if [ -z "$protocol" ] || [ "$protocol" = "null" ]; then
+        return 1
+    fi
+    add_user_to_config "$user" "$protocol" "$uuid" "$expiry"
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" '
+        (.users[] | select(.username==$user) | .status) = "active"
+        | (.users[] | select(.username==$user) | .disabled_reason) = null
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    log_msg "INFO" "User ${user} enabled."
+}
+
+reset_bandwidth() {
+    local user="$1"
+    statsquery_sum "user>>>${user}>>>traffic>>>uplink" 1 >/dev/null
+    statsquery_sum "user>>>${user}>>>traffic>>>downlink" 1 >/dev/null
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --arg now "$now" '
+        (.users[] | select(.username==$user) | .bandwidth.used_bytes) = 0
+        | (.users[] | select(.username==$user) | .bandwidth.last_reset) = $now
+        | (.users[] | select(.username==$user) | .status) = "active"
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    enable_user "$user" >/dev/null 2>&1
+    log_msg "INFO" "Bandwidth reset for ${user}."
+}
+
+delete_user() {
+    local user="$1"
+    local protocol
+    protocol=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .protocol' "$DB_PATH")
+    if [ -z "$protocol" ] || [ "$protocol" = "null" ]; then
+        return 1
+    fi
+    remove_user_from_config "$user" "$protocol"
+    case "$protocol" in
+        vless)
+            rm -f "/home/vps/public_html/vless-${user}.txt"
+            ;;
+        vmess)
+            rm -f "/home/vps/public_html/vmess-${user}.txt"
+            ;;
+        trojan)
+            rm -f "/home/vps/public_html/trojan-${user}.txt"
+            ;;
+        ss)
+            rm -f "/home/vps/public_html/sodosokws-${user}.txt" "/home/vps/public_html/sodosokgrpc-${user}.txt"
+            ;;
+        socks)
+            rm -f "/home/vps/public_html/socksws-${user}.txt" "/home/vps/public_html/socksgrpc-${user}.txt"
+            ;;
+    esac
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" '
+        .users |= map(select(.username!=$user))
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    log_msg "INFO" "User ${user} deleted."
+}
+
+remove_db_only() {
+    local user="$1"
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" '
+        .users |= map(select(.username!=$user))
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+send_webhook() {
+    local user="$1"
+    local used_bytes="$2"
+    local limit_bytes="$3"
+    if [ -z "$WEBHOOK_URL" ]; then
+        return
+    fi
+    curl -s -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"user\":\"${user}\",\"used_bytes\":${used_bytes},\"limit_bytes\":${limit_bytes}}" >/dev/null 2>&1 || true
+}
+
+enforce_quotas() {
+    local now_ts
+    now_ts=$(date -u +%s)
+    backup_db
+    local users
+    users=$(jq -r '.users[]? | select(.status=="active") | .username' "$DB_PATH")
+    for user in $users; do
+        update_account_usage "$user"
+        local record
+        record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
+        if [ -z "$record" ]; then
+            continue
+        fi
+        local expiry limit used
+        expiry=$(echo "$record" | jq -r '.expiry')
+        limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
+        used=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
+        if [ -n "$expiry" ] && [ "$expiry" != "null" ]; then
+            local expiry_ts
+            expiry_ts=$(date -d "${expiry} 23:59:59" +%s 2>/dev/null || echo 0)
+            if [ "$expiry_ts" -gt 0 ] && [ "$now_ts" -ge "$expiry_ts" ]; then
+                disable_user "$user" "expired"
+                continue
+            fi
+        fi
+        if [ "$limit" -gt 0 ]; then
+            local allowed=$limit
+            if [ "$OVERAGE_PERCENT" -gt 0 ]; then
+                allowed=$((limit + (limit * OVERAGE_PERCENT / 100)))
+            fi
+            if [ "$used" -ge "$limit" ] && [ "$used" -lt "$allowed" ]; then
+                log_msg "WARN" "User ${user} exceeded quota warning (${used}/${limit})."
+                continue
+            fi
+            if [ "$used" -ge "$allowed" ]; then
+                log_msg "INFO" "User ${user} exceeded quota (${used}/${limit})."
+                disable_user "$user" "quota"
+                send_webhook "$user" "$used" "$limit"
+            fi
+        fi
+    done
+}
+
+usage_bar() {
+    local used="$1"
+    local limit="$2"
+    local width=20
+    if [ "$limit" -le 0 ]; then
+        printf "[%s]" "$(printf '█%.0s' $(seq 1 "$width"))"
+        return
+    fi
+    local percent=$((used * 100 / limit))
+    if [ "$percent" -gt 100 ]; then
+        percent=100
+    fi
+    local filled=$((percent * width / 100))
+    local empty=$((width - filled))
+    printf "["
+    if [ "$filled" -gt 0 ]; then
+        printf '█%.0s' $(seq 1 "$filled")
+    fi
+    if [ "$empty" -gt 0 ]; then
+        printf '░%.0s' $(seq 1 "$empty")
+    fi
+    printf "]"
+}
+
+show_user() {
+    local user="$1"
+    local record
+    record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
+    if [ -z "$record" ]; then
+        echo "User not found."
+        return 1
+    fi
+    local usage
+    usage=$(get_user_usage "$user")
+    local used_bytes limit_bytes remaining_bytes percent
+    used_bytes=$(echo "$usage" | cut -d'|' -f1)
+    limit_bytes=$(echo "$usage" | cut -d'|' -f2)
+    remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
+    percent=$(echo "$usage" | cut -d'|' -f4)
+    local limit_label
+    limit_label=$(format_limit "$limit_bytes")
+    local remaining_label
+    if [ "$limit_bytes" -le 0 ]; then
+        remaining_label="∞"
+    else
+        remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
+    fi
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "USER DETAILS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Username    : $(echo "$record" | jq -r '.username')"
+    echo "Protocol    : $(echo "$record" | jq -r '.protocol' | tr '[:lower:]' '[:upper:]')"
+    echo "Expiry      : $(echo "$record" | jq -r '.expiry')"
+    echo "Status      : $(echo "$record" | jq -r '.status' | tr '[:lower:]' '[:upper:]')"
+    echo "Bandwidth   : ${limit_label}"
+    echo "Used        : $(bytes_to_gb "$used_bytes") GB"
+    echo "Remaining   : ${remaining_label}"
+    echo "Usage       : $(usage_bar "$used_bytes" "$limit_bytes") $(bytes_to_gb "$used_bytes") GB / ${limit_label} (${percent}%)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+dashboard() {
+    local status_filter="${1:-all}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "USER MANAGEMENT DASHBOARD"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    printf "%-3s %-12s %-9s %-12s %-9s %-12s %-9s %-10s\n" "ID" "Username" "Protocol" "Limit" "Used" "Remaining" "Status" "Expiry"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    local users
+    if [ "$status_filter" = "all" ]; then
+        users=$(jq -r '.users[]? | [.username,.protocol,.bandwidth.limit_bytes,.expiry,.status] | @tsv' "$DB_PATH")
+    else
+        users=$(jq -r --arg status "$status_filter" '.users[]? | select(.status==$status) | [.username,.protocol,.bandwidth.limit_bytes,.expiry,.status] | @tsv' "$DB_PATH")
+    fi
+    local idx=1
+    while IFS=$'\t' read -r user protocol limit_bytes expiry status; do
+        if [ -z "$user" ]; then
+            continue
+        fi
+        local usage
+        usage=$(get_user_usage "$user")
+        local used_bytes limit remaining_bytes
+        used_bytes=$(echo "$usage" | cut -d'|' -f1)
+        limit=$(echo "$usage" | cut -d'|' -f2)
+        remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
+        local limit_label
+        if [ "$limit" -le 0 ]; then
+            limit_label="Unlimited"
+        else
+            limit_label="$(bytes_to_gb "$limit") GB"
+        fi
+        local used_label
+        used_label="$(bytes_to_gb "$used_bytes") GB"
+        local remaining_label
+        if [ "$limit" -le 0 ]; then
+            remaining_label="∞"
+        else
+            remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
+        fi
+        printf "%-3s %-12s %-9s %-12s %-9s %-12s %-9s %-10s\n" \
+            "$idx" \
+            "$user" \
+            "$(echo "$protocol" | tr '[:lower:]' '[:upper:]')" \
+            "$limit_label" \
+            "$used_label" \
+            "$remaining_label" \
+            "$(echo "$status" | tr '[:lower:]' '[:upper:]')" \
+            "$expiry"
+        idx=$((idx + 1))
+    done <<< "$users"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+rebuild_db() {
+    mkdir -p "$(dirname "$DB_PATH")" "$BACKUP_DIR" 2>/dev/null
+    local tmp
+    tmp=$(mktemp)
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo '{"users":[]}' > "$tmp"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        mv "$tmp" "$DB_PATH"
+        return
+    fi
+    while IFS='|' read -r user protocol expiry uuid; do
+        if [ -z "$user" ]; then
+            continue
+        fi
+        jq --arg user "$user" \
+            --arg protocol "$protocol" \
+            --arg uuid "$uuid" \
+            --arg expiry "$expiry" \
+            --arg created "$now" \
+            '.users += [{
+                id: $uuid,
+                username: $user,
+                email: $user,
+                protocol: $protocol,
+                created: $created,
+                expiry: $expiry,
+                bandwidth: {
+                    limit_bytes: 0,
+                    used_bytes: 0,
+                    last_reset: $created
+                },
+                status: "active",
+                configs: {}
+            }]' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+    done < <(awk '
+        /^#vls / {user=$2; exp=$3; proto="vless"; next}
+        /^#vms / {user=$2; exp=$3; proto="vmess"; next}
+        /^#tr / {user=$2; exp=$3; proto="trojan"; next}
+        /^#ssw / {user=$2; exp=$3; proto="ss"; next}
+        /^#ss / {user=$2; exp=$3; proto="socks"; next}
+        user != "" && /"id":/ {
+            if (match($0, /"id": *"[^"]+"/)) {
+                id=substr($0, RSTART+6, RLENGTH-7)
+                print user "|" proto "|" exp "|" id
+                user=""; exp=""; proto=""
+            }
+        }
+        user != "" && /"password":/ {
+            if (match($0, /"password": *"[^"]+"/)) {
+                id=substr($0, RSTART+12, RLENGTH-13)
+                print user "|" proto "|" exp "|" id
+                user=""; exp=""; proto=""
+            }
+        }
+        user != "" && /"pass":/ {
+            if (match($0, /"pass": *"[^"]+"/)) {
+                id=substr($0, RSTART+8, RLENGTH-9)
+                print user "|" proto "|" exp "|" id
+                user=""; exp=""; proto=""
+            }
+        }
+    ' "$CONFIG_PATH")
+    mv "$tmp" "$DB_PATH"
+}
+
+main() {
+    require_cmd jq
+    require_cmd bc
+    load_quota_config
+    resolve_xray_bin
+    db_init
+    local cmd="${1:-}"
+    case "$cmd" in
+        register)
+            register_account "$2" "$3" "$4" "$5" "$6" "${7:-{}}"
+            ;;
+        usage)
+            get_user_usage "$2"
+            ;;
+        reset)
+            reset_bandwidth "$2"
+            ;;
+        disable)
+            disable_user "$2" "${3:-quota}"
+            ;;
+        enable)
+            enable_user "$2"
+            ;;
+        enforce)
+            enforce_quotas
+            ;;
+        set-limit)
+            set_limit "$2" "$3"
+            ;;
+        extend-limit)
+            extend_limit "$2" "$3"
+            ;;
+        set-expiry)
+            set_expiry "$2" "$3"
+            ;;
+        show)
+            show_user "$2"
+            ;;
+        dashboard)
+            dashboard "${2:-all}"
+            ;;
+        delete)
+            delete_user "$2"
+            ;;
+        remove-db)
+            remove_db_only "$2"
+            ;;
+        rebuild)
+            rebuild_db
+            ;;
+        *)
+            echo "Usage: $0 {register|usage|reset|disable|enable|enforce|set-limit|extend-limit|set-expiry|show|dashboard|delete|remove-db|rebuild}"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

@@ -195,6 +195,9 @@ wget -q -O /usr/bin/menu-ss "https://raw.githubusercontent.com/LamonLind/Blue/ma
 wget -q -O /usr/bin/menu-trojan "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trojan.sh"
 wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trgo.sh"
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
+wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
+wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
+wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-monitor.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
 wget -q -O /usr/bin/bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/bckpbot.sh"
@@ -231,6 +234,7 @@ chmod +x /usr/bin/menu-socks
 chmod +x /usr/bin/menu-trojan
 chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
+chmod +x /usr/bin/menu-bandwidth
 chmod +x /usr/bin/menu-bckp
 chmod +x /usr/bin/menu
 chmod +x /usr/bin/bckp
@@ -240,8 +244,30 @@ chmod +x /usr/bin/update
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr
+chmod +x /usr/bin/xray-quota-manager
+chmod +x /usr/local/bin/xray_quota_monitor.sh
 #chmod +x /usr/bin/del-xrays
 #chmod +x /usr/bin/user-xrays
+
+cat > /etc/systemd/system/xray-quota-monitor.service <<-END
+[Unit]
+Description=Xray Bandwidth Quota Monitor
+After=xray.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/xray_quota_monitor.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+END
+
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable xray-quota-monitor >/dev/null 2>&1
+systemctl start xray-quota-monitor >/dev/null 2>&1
 
 
 # > install gotop

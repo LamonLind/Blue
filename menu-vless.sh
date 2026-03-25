@@ -153,6 +153,9 @@ NUMBER_OF_CLIENTS=$(grep -c -E "^#vlsg " "/etc/xray/config.json")
     sed -i "/#vls $user/c\#vls $user $exp4" /etc/xray/config.json
     sed -i "/#vlsx $user/c\#vlsx $user $exp4" /etc/xray/config.json
     systemctl restart xray > /dev/null 2>&1
+    if command -v xray-quota-manager >/dev/null 2>&1; then
+        xray-quota-manager set-expiry "$user" "$exp4" >/dev/null 2>&1
+    fi
     clear
     echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo " Vless Account Was Successfully Renewed"
@@ -196,9 +199,12 @@ exp=$(grep -E "^#vlsg " "/etc/xray/config.json" | cut -d ' ' -f 3 | sed -n "${CL
 sed -i "/^#vlsg $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vls $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^#vlsx $user $exp/,/^},{/d" /etc/xray/config.json
-rm -f /home/vps/public_html/vless-$user.txt
-systemctl restart xray.service
-service cron restart
+    rm -f /home/vps/public_html/vless-$user.txt
+    systemctl restart xray.service
+    service cron restart
+    if command -v xray-quota-manager >/dev/null 2>&1; then
+        xray-quota-manager remove-db "$user" >/dev/null 2>&1
+    fi
 clear
 echo ""
 echo "==============================="

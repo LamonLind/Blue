@@ -235,6 +235,7 @@ echo -e "     ${BICyan}[${BIWhite}11${BICyan}] ADD HOST/DOMAIN ${BICyan}${BIYell
 echo -e "     ${BICyan}[${BIWhite}12${BICyan}] RENEW CERT ${BICyan}${BIYellow}${BICyan}${NC}"       
 echo -e "     ${BICyan}[${BIWhite}13${BICyan}] EDIT BANNER ${BICyan}${BIYellow}${BICyan}${NC}" 
 echo -e "     ${BICyan}[${BIWhite}14${BICyan}] RUNNING STATUS ${BICyan}${BIYellow}${BICyan}${NC}" 
+echo -e "     ${BICyan}[${BIWhite}15${BICyan}] BANDWIDTH QUOTA ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}16${BICyan}] SPEEDTEST ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}18${BICyan}] LIMIT SPEED ${BICyan}${BIYellow}${BICyan}${NC}"
 echo -e "     ${BICyan}[${BIWhite}19${BICyan}] WEBMIN ${BICyan}${BIYellow}${BICyan}${NC}"
@@ -280,6 +281,7 @@ case $opt in
 12) clear ; genssl ;;
 13) clear ; nano /etc/issue.net ;;
 14) clear ; running ;;
+15) clear ; menu-bandwidth ;;
 16) clear ; cek-speed ;;
 18) clear ; limit-speed ;;
 19) clear ; wbm ;;

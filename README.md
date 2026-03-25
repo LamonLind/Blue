@@ -57,6 +57,7 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
 - Automatic account disable when total limit is exceeded
 - JSON-based account database with limit, usage, expiry, status, and reset timestamp
 - 1-minute monitor cycle for near real-time enforcement
+- CLI bandwidth dashboard (menu-bandwidth) for reset/extend/enable/disable workflows
 
 ### 📡 Host Capture System
 - Captures all incoming hosts/domains from VPN connections

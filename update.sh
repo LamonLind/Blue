@@ -112,6 +112,14 @@ manage_services() {
     else
         echo -e " ${RED}✗${NC}"
     fi
+
+    echo -ne "${CYAN}Updating xray-quota-monitor.service...${NC}"
+    if wget -q -O /etc/systemd/system/xray-quota-monitor.service "https://${REPO_URL}/xray-quota-monitor.service"; then
+        echo -e " ${GREEN}✓${NC}"
+    else
+        echo -e " ${RED}✗${NC}"
+    fi
+    wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://${REPO_URL}/xray-quota-monitor.sh" && chmod +x /usr/local/bin/xray_quota_monitor.sh
     
     # Remove old daemon artifacts no longer needed
     rm -f /usr/local/bin/capture-host-daemon.sh
@@ -138,12 +146,20 @@ manage_services() {
     # Ensure host-capture service is running
     systemctl daemon-reload
     systemctl enable host-capture 2>/dev/null
+    systemctl enable xray-quota-monitor 2>/dev/null
     if ! systemctl is-active --quiet host-capture 2>/dev/null; then
         systemctl start host-capture 2>/dev/null
         echo -e "${GREEN}[INFO]${NC} Started host-capture service"
     else
         systemctl restart host-capture 2>/dev/null
         echo -e "${GREEN}[INFO]${NC} Restarted host-capture service"
+    fi
+    if ! systemctl is-active --quiet xray-quota-monitor 2>/dev/null; then
+        systemctl start xray-quota-monitor 2>/dev/null
+        echo -e "${GREEN}[INFO]${NC} Started xray-quota-monitor service"
+    else
+        systemctl restart xray-quota-monitor 2>/dev/null
+        echo -e "${GREEN}[INFO]${NC} Restarted xray-quota-monitor service"
     fi
     
     echo -e "${GREEN}[INFO]${NC} Services managed successfully"
@@ -178,9 +194,9 @@ update_all_scripts() {
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
         "cek-speed" "cek-ram" "limit-speed"
-        "realtime-hosts" "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
+        "realtime-hosts" "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan" "menu-bandwidth"
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts" "menu-wildcard"
-        "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp"
+        "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp" "xray-quota-manager"
         "dns" "netf" "bbr" "backup" "restore"
     )
     
@@ -196,6 +212,8 @@ update_all_scripts() {
             filename="menu4.sh"
         elif [ "$script" == "cek-speed" ]; then
             filename="speedtest_cli.py"
+        elif [ "$script" == "xray-quota-manager" ]; then
+            filename="xray-quota-manager"
         fi
         
         if wget -q -O "/usr/bin/${script}" "https://${REPO_URL}/${filename}"; then
@@ -254,16 +272,19 @@ update_component() {
             wget -q -O /usr/bin/add-vless "https://${REPO_URL}/add-vless.sh" && chmod +x /usr/bin/add-vless
             wget -q -O /usr/bin/add-tr "https://${REPO_URL}/add-tr.sh" && chmod +x /usr/bin/add-tr
             wget -q -O /usr/bin/add-ssws "https://${REPO_URL}/add-ssws.sh" && chmod +x /usr/bin/add-ssws
+            wget -q -O /usr/bin/xray-quota-manager "https://${REPO_URL}/xray-quota-manager" && chmod +x /usr/bin/xray-quota-manager
             wget -q -O /usr/bin/menu-vmess "https://${REPO_URL}/menu-vmess.sh" && chmod +x /usr/bin/menu-vmess
             wget -q -O /usr/bin/menu-vless "https://${REPO_URL}/menu-vless.sh" && chmod +x /usr/bin/menu-vless
             wget -q -O /usr/bin/menu-trojan "https://${REPO_URL}/menu-trojan.sh" && chmod +x /usr/bin/menu-trojan
             wget -q -O /usr/bin/menu-ss "https://${REPO_URL}/menu-ss.sh" && chmod +x /usr/bin/menu-ss
+            wget -q -O /usr/bin/menu-bandwidth "https://${REPO_URL}/menu-bandwidth.sh" && chmod +x /usr/bin/menu-bandwidth
             echo -e "${GREEN}[DONE]${NC} XRAY scripts updated!"
             ;;
         3)
             echo -e "${YELLOW}[INFO]${NC} Updating menu scripts..."
             wget -q -O /usr/bin/menu "https://${REPO_URL}/menu4.sh" && chmod +x /usr/bin/menu
             wget -q -O /usr/bin/menu-wildcard "https://${REPO_URL}/menu-wildcard.sh" && chmod +x /usr/bin/menu-wildcard
+            wget -q -O /usr/bin/menu-bandwidth "https://${REPO_URL}/menu-bandwidth.sh" && chmod +x /usr/bin/menu-bandwidth
             echo -e "${GREEN}[DONE]${NC} Menu scripts updated!"
             ;;
         4)

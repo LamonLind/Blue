@@ -198,6 +198,9 @@ wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/m
 wget -q -O /usr/bin/menu-slowdns "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-slowdns.sh"
 wget -q -O /usr/bin/menu-captured-hosts "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-captured-hosts.sh"
 wget -q -O /usr/bin/menu-wildcard "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-wildcard.sh"
+wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
+wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
+wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-monitor.sh"
 wget -q -O /usr/bin/capture-host "https://raw.githubusercontent.com/LamonLind/Blue/main/capture-host.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
@@ -238,6 +241,7 @@ chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
 chmod +x /usr/bin/menu-slowdns
 chmod +x /usr/bin/menu-wildcard
+chmod +x /usr/bin/menu-bandwidth
 chmod +x /usr/bin/capture-host
 chmod +x /usr/bin/menu-bckp
 chmod +x /usr/bin/menu
@@ -249,6 +253,8 @@ chmod +x /usr/bin/uninstall
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr
+chmod +x /usr/bin/xray-quota-manager
+chmod +x /usr/local/bin/xray_quota_monitor.sh
 #chmod +x /usr/bin/del-xrays
 #chmod +x /usr/bin/user-xrays
 
@@ -329,6 +335,27 @@ END
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable host-capture >/dev/null 2>&1
 systemctl start host-capture >/dev/null 2>&1
+
+# Create systemd service for Xray bandwidth quota monitor
+cat > /etc/systemd/system/xray-quota-monitor.service <<-END
+[Unit]
+Description=Xray Bandwidth Quota Monitor
+After=xray.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/xray_quota_monitor.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+END
+
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable xray-quota-monitor >/dev/null 2>&1
+systemctl start xray-quota-monitor >/dev/null 2>&1
 
 cat > /home/re_otm <<-END
 7

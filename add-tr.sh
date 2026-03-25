@@ -93,8 +93,24 @@ clear
 	done
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
-read -p "Expired (days): " masaaktif
-exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+while true; do
+    read -rp "Bandwidth limit (GB, 0=unlimited): " quota_gb
+    if [[ "$quota_gb" =~ ^[0-9]+$ ]] && [ "$quota_gb" -ge 0 ] && [ "$quota_gb" -le 10000 ]; then
+        break
+    fi
+    echo "Please enter a valid limit between 0 and 10000."
+done
+read -p "Expired (days or YYYY-MM-DD): " masaaktif
+if [[ "$masaaktif" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    exp="$masaaktif"
+else
+    exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+fi
+if [ "$quota_gb" -eq 0 ]; then
+    quota_label="Unlimited"
+else
+    quota_label="${quota_gb} GB"
+fi
 
 sed -i '/#trojanws$/a\#tr '"$user $exp"'\
 },{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
@@ -117,6 +133,8 @@ _______________________________________________________
 _______________________________________________________
 Username/Email : $user
 Expired On : $exp
+Bandwidth Limit : $quota_label
+Bandwidth Used : 0 GB
 _______________________________________________________
               Link Trojan Account
 _______________________________________________________
@@ -130,6 +148,14 @@ END
 trojanlink1="trojan://${uuid}@${domain}:${tr}?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#TROJAN_WS_${user}"
 trojanlink2="trojan-go://${uuid}@${domain}:${tr}?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#TROJANGO_${user}"
 trojanlink4="trojan://${uuid}@${domain}:${tr}?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&sni=${domain}#TROJAN_GRPC_${user}"
+if command -v xray-quota-manager >/dev/null 2>&1; then
+    configs_json=$(jq -nc \
+        --arg ws "$trojanlink1" \
+        --arg go "$trojanlink2" \
+        --arg grpc "$trojanlink4" \
+        '{ws:$ws,go:$go,grpc:$grpc}')
+    xray-quota-manager register "$user" "trojan" "$uuid" "$exp" "$quota_gb" "$configs_json" >/dev/null 2>&1
+fi
 clear
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "\E[0;41;36m           TROJAN ACCOUNT          \E[0m" | tee -a /etc/log-create-user.log
@@ -150,6 +176,8 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "Link GRPC : ${trojanlink4}" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Link Trojan Config : http://${domain}:81/trojan-$user.txt" | tee -a /etc/log-create-user.log
+echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
+echo -e "Bandwidth : ${quota_label} (0 GB used)" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log

@@ -138,7 +138,29 @@ statsquery_sum() {
         return 1
     fi
     local sum
-    sum=$(echo "$output" | jq -r '[.stat[]?.value // 0] | add // 0' 2>/dev/null)
+    sum=$(echo "$output" | jq -er '[.stat[]?.value // 0] | add // 0' 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$sum" ]; then
+        sum=$(echo "$output" | awk '
+            BEGIN { total=0; found=0 }
+            {
+                line=$0
+                while (match(line, /value:[[:space:]]*-?[0-9]+/)) {
+                    val=substr(line, RSTART, RLENGTH)
+                    sub(/value:[[:space:]]*/, "", val)
+                    total+=val
+                    found=1
+                    line=substr(line, RSTART + RLENGTH)
+                }
+            }
+            END {
+                if (found) {
+                    print total
+                } else {
+                    print 0
+                }
+            }
+        ')
+    fi
     echo "${sum:-0}"
 }
 

@@ -716,20 +716,20 @@ sync_missing_users() {
     if [ -f "$DB_PATH" ]; then
         local cp_err
         if ! cp_err=$(cp "$DB_PATH" "$tmp_db" 2>&1); then
-            log_msg "WARN" "Failed to copy quota DB (${DB_PATH}): ${cp_err:-reason unknown}. ${empty_db_warning_suffix}"
+            log_msg "WARN" "Failed to copy quota DB from ${DB_PATH} to temporary file: ${cp_err:-reason unknown}. ${empty_db_warning_suffix}"
             echo '{"users":[]}' > "$tmp_db"
         fi
     else
         echo '{"users":[]}' > "$tmp_db"
     fi
     if ! jq -e '.users | type == "array"' "$tmp_db" >/dev/null 2>&1; then
-        log_msg "WARN" "Quota DB users list invalid. ${empty_db_warning_suffix}"
+        log_msg "WARN" "Quota DB users field missing or not an array. ${empty_db_warning_suffix}"
         echo '{"users":[]}' > "$tmp_db"
     fi
-    local -A existing_users
+    local -A existing_user_map
     while IFS= read -r existing_user; do
         if [ -n "$existing_user" ]; then
-            existing_users["$existing_user"]=1
+            existing_user_map["$existing_user"]=1
         fi
     done < <(jq -r '.users[] | .username' "$tmp_db")
     local added=0
@@ -737,7 +737,7 @@ sync_missing_users() {
         if [ -z "$user" ]; then
             continue
         fi
-        if [ -z "${existing_users[$user]}" ]; then
+        if [ -z "${existing_user_map[$user]}" ]; then
             jq --arg user "$user" \
                 --arg protocol "$protocol" \
                 --arg uuid "$uuid" \
@@ -759,7 +759,7 @@ sync_missing_users() {
                     configs: {}
                 }]' "$tmp_db" > "${tmp_db}.next" && mv "${tmp_db}.next" "$tmp_db"
             added=$((added + 1))
-            existing_users["$user"]=1
+            existing_user_map["$user"]=1
         fi
     done < <(config_user_records)
     if [ "$added" -gt 0 ]; then

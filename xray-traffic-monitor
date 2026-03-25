@@ -24,6 +24,18 @@ log_msg() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
+# Escape regex special characters for xray stats pattern matching
+escape_xray_pattern() {
+    printf '%s' "$1" | sed 's/[][\\.^$|?*+(){}]/\\&/g'
+}
+
+# Sum all "value" entries from xray statsquery output
+sum_stats_values() {
+    grep -oE '"value"[[:space:]]*:[[:space:]]*"?[0-9]+"' \
+        | sed 's/[^0-9]//g' \
+        | awk '{sum+=$1} END {print sum+0}'
+}
+
 # Get user traffic from xray stats API (like 3x-ui GetXrayTraffic)
 # Formula: uplink + downlink
 # Returns: total bytes used (uplink + downlink)
@@ -35,17 +47,16 @@ get_user_traffic() {
     
     # Check if xray exists and is executable
     if [ -x "$_Xray" ]; then
-        # Escape regex special characters in email (xray -pattern uses Go regexp,
-        # so dots and plus signs must be escaped to avoid matching other users' stats)
+        # Escape regex special characters in email (xray -pattern uses Go regexp)
         local escaped_email
-        escaped_email=$(printf '%s' "$email" | sed 's/[.+*?^${}|]/\\&/g')
+        escaped_email=$(escape_xray_pattern "$email")
         
         # Get uplink (upload)
-        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$escaped_email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "^user>>>$escaped_email>>>traffic>>>uplink$" 2>/dev/null | sum_stats_values)
         [ -z "$uplink" ] && uplink=0
         
         # Get downlink (download) - handle both "value":"123" and "value": 123 formats
-        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$escaped_email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "^user>>>$escaped_email>>>traffic>>>downlink$" 2>/dev/null | sum_stats_values)
         [ -z "$downlink" ] && downlink=0
     fi
     

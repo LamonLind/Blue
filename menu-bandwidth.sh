@@ -64,7 +64,7 @@ escape_xray_pattern() {
 
 # Sum all "value" entries from xray statsquery output
 sum_stats_values() {
-    grep -oE '"value"[[:space:]]*:[[:space:]]*"?[0-9]+"' \
+    grep -oE '"value"[[:space:]]*:[[:space:]]*("[0-9]+"|[0-9]+)' \
         | sed 's/[^0-9]//g' \
         | awk '{sum+=$1} END {print sum+0}'
 }

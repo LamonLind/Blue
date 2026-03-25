@@ -53,6 +53,7 @@ db_init() {
         log_msg "WARN" "Quota DB invalid; rebuilding from config."
         rebuild_db
     fi
+    sync_missing_users
 }
 
 backup_db() {
@@ -666,6 +667,110 @@ dashboard() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
+config_user_records() {
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    if ! awk '
+        /^#vls / {user=$2; exp=$3; proto="vless"; next}
+        /^#vms / {user=$2; exp=$3; proto="vmess"; next}
+        /^#tr / {user=$2; exp=$3; proto="trojan"; next}
+        /^#ssw / {user=$2; exp=$3; proto="ss"; next}
+        /^#ss / {user=$2; exp=$3; proto="socks"; next}
+        user != "" && /"id":/ {
+            if (match($0, /"id": *"[^"]+"/)) {
+                id=substr($0, RSTART+6, RLENGTH-7)
+                print user "|" proto "|" exp "|" id
+                user=""; exp=""; proto=""
+            }
+        }
+        user != "" && /"password":/ {
+            if (match($0, /"password": *"[^"]+"/)) {
+                id=substr($0, RSTART+12, RLENGTH-13)
+                print user "|" proto "|" exp "|" id
+                user=""; exp=""; proto=""
+            }
+        }
+        user != "" && /"pass":/ {
+            if (match($0, /"pass": *"[^"]+"/)) {
+                id=substr($0, RSTART+8, RLENGTH-9)
+                print user "|" proto "|" exp "|" id
+                user=""; exp=""; proto=""
+            }
+        }
+    ' "$CONFIG_PATH"; then
+        log_msg "WARN" "Failed to parse ${CONFIG_PATH} for quota records; check file readability and format."
+        return 1
+    fi
+}
+
+sync_missing_users() {
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp_db
+    tmp_db=$(mktemp)
+    local empty_db_warning_suffix="Proceeding with sync using empty database as base."
+    if [ -f "$DB_PATH" ]; then
+        local cp_err
+        if ! cp_err=$(cp "$DB_PATH" "$tmp_db" 2>&1); then
+            log_msg "WARN" "Failed to copy quota DB from ${DB_PATH} to temporary file: ${cp_err:-reason unknown}. ${empty_db_warning_suffix}"
+            echo '{"users":[]}' > "$tmp_db"
+        fi
+    else
+        echo '{"users":[]}' > "$tmp_db"
+    fi
+    if ! jq -e '.users | type == "array"' "$tmp_db" >/dev/null 2>&1; then
+        log_msg "WARN" "Quota DB users field missing or not an array. ${empty_db_warning_suffix}"
+        echo '{"users":[]}' > "$tmp_db"
+    fi
+    local -A existing_user_map
+    while IFS= read -r existing_user; do
+        if [ -n "$existing_user" ]; then
+            existing_user_map["$existing_user"]=1
+        fi
+    done < <(jq -r '.users[] | .username' "$tmp_db")
+    local added=0
+    while IFS='|' read -r user protocol expiry uuid; do
+        if [ -z "$user" ]; then
+            continue
+        fi
+        if [ -z "${existing_user_map[$user]}" ]; then
+            jq --arg user "$user" \
+                --arg protocol "$protocol" \
+                --arg uuid "$uuid" \
+                --arg expiry "$expiry" \
+                --arg created "$now" \
+                '.users += [{
+                    id: $uuid,
+                    username: $user,
+                    email: $user,
+                    protocol: $protocol,
+                    created: $created,
+                    expiry: $expiry,
+                    bandwidth: {
+                        limit_bytes: 0,
+                        used_bytes: 0,
+                        last_reset: $created
+                    },
+                    status: "active",
+                    configs: {}
+                }]' "$tmp_db" > "${tmp_db}.next" && mv "${tmp_db}.next" "$tmp_db"
+            added=$((added + 1))
+            existing_user_map["$user"]=1
+        fi
+    done < <(config_user_records)
+    if [ "$added" -gt 0 ]; then
+        backup_db
+        mv "$tmp_db" "$DB_PATH"
+        log_msg "INFO" "Synced ${added} user(s) from config."
+    else
+        rm -f "$tmp_db"
+    fi
+}
+
 rebuild_db() {
     mkdir -p "$(dirname "$DB_PATH")" "$BACKUP_DIR" 2>/dev/null
     local tmp
@@ -701,34 +806,7 @@ rebuild_db() {
                 status: "active",
                 configs: {}
             }]' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
-    done < <(awk '
-        /^#vls / {user=$2; exp=$3; proto="vless"; next}
-        /^#vms / {user=$2; exp=$3; proto="vmess"; next}
-        /^#tr / {user=$2; exp=$3; proto="trojan"; next}
-        /^#ssw / {user=$2; exp=$3; proto="ss"; next}
-        /^#ss / {user=$2; exp=$3; proto="socks"; next}
-        user != "" && /"id":/ {
-            if (match($0, /"id": *"[^"]+"/)) {
-                id=substr($0, RSTART+6, RLENGTH-7)
-                print user "|" proto "|" exp "|" id
-                user=""; exp=""; proto=""
-            }
-        }
-        user != "" && /"password":/ {
-            if (match($0, /"password": *"[^"]+"/)) {
-                id=substr($0, RSTART+12, RLENGTH-13)
-                print user "|" proto "|" exp "|" id
-                user=""; exp=""; proto=""
-            }
-        }
-        user != "" && /"pass":/ {
-            if (match($0, /"pass": *"[^"]+"/)) {
-                id=substr($0, RSTART+8, RLENGTH-9)
-                print user "|" proto "|" exp "|" id
-                user=""; exp=""; proto=""
-            }
-        }
-    ' "$CONFIG_PATH")
+    done < <(config_user_records)
     mv "$tmp" "$DB_PATH"
 }
 

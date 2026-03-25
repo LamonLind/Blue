@@ -206,8 +206,8 @@ initialize_iptables_tracking() {
         # Track outgoing traffic (upload)
         iptables -I OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
         
-        # Mark connections for this user
-        iptables -I OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
+        # Mark connections for this user (mangle table required for CONNMARK)
+        iptables -t mangle -I OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
         
         # Track incoming traffic (download) using connection marks
         iptables -I INPUT -m connmark --mark "$uid" -j "$chain_name" 2>/dev/null
@@ -250,7 +250,7 @@ cleanup_iptables_tracking() {
     
     # Remove jump rules
     iptables -D OUTPUT -m owner --uid-owner "$uid" -j "$chain_name" 2>/dev/null
-    iptables -D OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
+    iptables -t mangle -D OUTPUT -m owner --uid-owner "$uid" -j CONNMARK --set-mark "$uid" 2>/dev/null
     iptables -D INPUT -m connmark --mark "$uid" -j "$chain_name" 2>/dev/null
     
     # Flush and delete chain

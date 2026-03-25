@@ -147,7 +147,7 @@ update_account_usage() {
     local uuid="$1"
     local usage="$2"
     db_write --arg uuid "$uuid" --argjson usage "$usage" \
-      '(.accounts[] | select(.uuid==$uuid) | .total_usage_bytes) = $usage'
+      '(.accounts[] | select(.uuid==$uuid) | .total_usage_bytes) += $usage'
 }
 
 update_account_status() {
@@ -204,9 +204,9 @@ get_user_traffic_by_id() {
     local escaped_id
     escaped_id=$(escape_xray_pattern "$id")
 
-    uplink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>uplink$" 2>/dev/null | sum_stats_values)
+    uplink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>uplink$" -reset 2>/dev/null | sum_stats_values)
     [ -z "$uplink" ] && uplink=0
-    downlink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>downlink$" 2>/dev/null | sum_stats_values)
+    downlink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>downlink$" -reset 2>/dev/null | sum_stats_values)
     [ -z "$downlink" ] && downlink=0
 
     echo $((uplink + downlink))
@@ -220,14 +220,10 @@ aggregated_usage_for_account() {
     usage_uuid=$(get_user_traffic_by_id "$uuid")
     usage_user=$(get_user_traffic_by_id "$username")
 
-    # Aggregated across protocols without duplication:
-    # all protocol entries for same account key share same stat bucket.
-    # Prefer UUID bucket, fallback to username bucket for older configs.
-    if [ "$usage_uuid" -gt 0 ] 2>/dev/null; then
-        echo "$usage_uuid"
-    else
-        echo "$usage_user"
-    fi
+    # Sum both UUID and username buckets so all traffic is captured and both
+    # stat counters are drained on each poll, regardless of which email
+    # format is used in the Xray config.
+    echo $((usage_uuid + usage_user))
 }
 
 remove_user_from_xray_config() {
@@ -325,11 +321,12 @@ create_account() {
 
 list_accounts() {
     printf "%-18s %-36s %-12s %-12s %-12s %-10s\n" "USERNAME" "UUID" "LIMIT" "USAGE" "REMAINING" "STATUS"
-    jq -r '.accounts[] | [.username,.uuid,.bandwidth_limit_bytes,.total_usage_bytes,.status] | @tsv' "$DB_FILE" | while IFS=$'\t' read -r username uuid limit usage status; do
+    jq -r '.accounts[] | [.username,.uuid,.bandwidth_limit_bytes,.total_usage_bytes,.status] | @tsv' "$DB_FILE" | while IFS=$'\t' read -r username uuid limit stored_usage status; do
         [ -z "$username" ] && continue
-        local current_usage
-        current_usage=$(aggregated_usage_for_account "$username" "$uuid")
-        update_account_usage "$uuid" "$current_usage"
+        local delta current_usage
+        delta=$(aggregated_usage_for_account "$username" "$uuid")
+        update_account_usage "$uuid" "$delta"
+        current_usage=$((stored_usage + delta))
         local remaining=0
         if [ "$limit" -gt "$current_usage" ] 2>/dev/null; then
             remaining=$((limit-current_usage))
@@ -352,8 +349,11 @@ show_usage() {
     limit=$(_jq '.bandwidth_limit_bytes')
     status=$(_jq '.status')
     expiry=$(_jq '.expiry_date')
-    usage=$(aggregated_usage_for_account "$username" "$uuid")
-    update_account_usage "$uuid" "$usage"
+    local stored_usage delta
+    stored_usage=$(_jq '.total_usage_bytes // 0')
+    delta=$(aggregated_usage_for_account "$username" "$uuid")
+    update_account_usage "$uuid" "$delta"
+    usage=$((stored_usage + delta))
     echo -e "${BLUE}Account:${NC} $username"
     echo "UUID: $uuid"
     echo "Expiry: $expiry"
@@ -454,13 +454,14 @@ legacy_remove() {
 }
 
 enforce_once() {
-    jq -r '.accounts[] | [.username,.uuid,.bandwidth_limit_bytes,.status] | @tsv' "$DB_FILE" | while IFS=$'\t' read -r username uuid limit status; do
+    jq -r '.accounts[] | [.username,.uuid,.bandwidth_limit_bytes,.total_usage_bytes,.status] | @tsv' "$DB_FILE" | while IFS=$'\t' read -r username uuid limit stored_usage status; do
         [ -z "$username" ] && continue
         [ "$status" = "disabled" ] && continue
         [ "$limit" -le 0 ] 2>/dev/null && continue
-        local usage
-        usage=$(aggregated_usage_for_account "$username" "$uuid")
-        update_account_usage "$uuid" "$usage"
+        local delta usage
+        delta=$(aggregated_usage_for_account "$username" "$uuid")
+        update_account_usage "$uuid" "$delta"
+        usage=$((stored_usage + delta))
         if [ "$usage" -ge "$limit" ] 2>/dev/null; then
             remove_user_from_xray_config "$username"
             update_account_status "$uuid" "disabled"

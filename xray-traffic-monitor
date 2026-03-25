@@ -35,12 +35,17 @@ get_user_traffic() {
     
     # Check if xray exists and is executable
     if [ -x "$_Xray" ]; then
+        # Escape regex special characters in email (xray -pattern uses Go regexp,
+        # so dots and plus signs must be escaped to avoid matching other users' stats)
+        local escaped_email
+        escaped_email=$(printf '%s' "$email" | sed 's/[.+*?^${}|]/\\&/g')
+        
         # Get uplink (upload)
-        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$escaped_email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
         [ -z "$uplink" ] && uplink=0
         
         # Get downlink (download) - handle both "value":"123" and "value": 123 formats
-        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$escaped_email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
         [ -z "$downlink" ] && downlink=0
     fi
     

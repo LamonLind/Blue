@@ -699,7 +699,7 @@ config_user_records() {
             }
         }
     ' "$CONFIG_PATH"; then
-        log_msg "WARN" "Failed to parse ${CONFIG_PATH} for quota sync."
+        log_msg "WARN" "Failed to parse ${CONFIG_PATH} for quota sync/rebuild; check file readability and format."
         return 1
     fi
 }
@@ -712,17 +712,18 @@ sync_missing_users() {
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local tmp_db
     tmp_db=$(mktemp)
+    local empty_db_notice="Proceeding with sync using empty database as base."
     if [ -f "$DB_PATH" ]; then
         local cp_err
         if ! cp_err=$(cp "$DB_PATH" "$tmp_db" 2>&1); then
-            log_msg "WARN" "Failed to copy quota DB (${DB_PATH}): ${cp_err:-no error output}. Proceeding with sync using empty database as base."
+            log_msg "WARN" "Failed to copy quota DB (${DB_PATH}): ${cp_err:-no details available}. ${empty_db_notice}"
             echo '{"users":[]}' > "$tmp_db"
         fi
     else
         echo '{"users":[]}' > "$tmp_db"
     fi
     if ! jq -e '.users | type == "array"' "$tmp_db" >/dev/null 2>&1; then
-        log_msg "WARN" "Quota DB users list invalid. Proceeding with sync using empty database as base."
+        log_msg "WARN" "Quota DB users list invalid. ${empty_db_notice}"
         echo '{"users":[]}' > "$tmp_db"
     fi
     local -A existing_users

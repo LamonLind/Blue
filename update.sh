@@ -119,7 +119,7 @@ manage_services() {
     else
         echo -e " ${RED}✗${NC}"
     fi
-    wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://${REPO_URL}/xray-quota-monitor.sh" && chmod +x /usr/local/bin/xray_quota_monitor.sh
+    wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://${REPO_URL}/xray_quota_monitor.sh" && chmod +x /usr/local/bin/xray_quota_monitor.sh
     
     # Remove old daemon artifacts no longer needed
     rm -f /usr/local/bin/capture-host-daemon.sh

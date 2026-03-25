@@ -200,7 +200,7 @@ wget -q -O /usr/bin/menu-captured-hosts "https://raw.githubusercontent.com/Lamon
 wget -q -O /usr/bin/menu-wildcard "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-wildcard.sh"
 wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
 wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
-wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-monitor.sh"
+wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray_quota_monitor.sh"
 wget -q -O /usr/bin/capture-host "https://raw.githubusercontent.com/LamonLind/Blue/main/capture-host.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"

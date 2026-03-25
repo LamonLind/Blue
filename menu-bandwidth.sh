@@ -121,7 +121,11 @@ while true; do
             esac
             ;;
         7)
-            menu
+            if [ -x /usr/bin/menu ]; then
+                /usr/bin/menu
+            else
+                menu
+            fi
             exit 0
             ;;
         *)

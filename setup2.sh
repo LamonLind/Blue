@@ -197,7 +197,7 @@ wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
 wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
 wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
-wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-monitor.sh"
+wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray_quota_monitor.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
 wget -q -O /usr/bin/bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/bckpbot.sh"

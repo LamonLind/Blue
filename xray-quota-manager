@@ -82,6 +82,24 @@ bytes_to_gb() {
     echo "scale=1; $bytes/1073741824" | bc
 }
 
+bytes_to_mb() {
+    local bytes="$1"
+    if [ "$bytes" -le 0 ]; then
+        echo "0.0"
+        return
+    fi
+    echo "scale=1; $bytes/1048576" | bc
+}
+
+format_usage_value() {
+    local bytes="$1"
+    if [ "$bytes" -lt 1073741824 ]; then
+        printf "%s MB" "$(bytes_to_mb "$bytes")"
+    else
+        printf "%s GB" "$(bytes_to_gb "$bytes")"
+    fi
+}
+
 format_limit() {
     local limit_bytes="$1"
     if [ "$limit_bytes" -le 0 ]; then
@@ -124,6 +142,11 @@ statsquery_sum() {
     echo "${sum:-0}"
 }
 
+escape_xray_pattern() {
+    local input="$1"
+    echo "$input" | sed 's/[][(){}.^$*+?|\\]/\\&/g'
+}
+
 get_user_usage() {
     local user="$1"
     local record
@@ -136,8 +159,10 @@ get_user_usage() {
     stored=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
     limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
     local uplink downlink
-    uplink=$(statsquery_sum "user>>>${user}>>>traffic>>>uplink" 0)
-    downlink=$(statsquery_sum "user>>>${user}>>>traffic>>>downlink" 0)
+    local escaped_user
+    escaped_user=$(escape_xray_pattern "$user")
+    uplink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 0)
+    downlink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 0)
     local current_total=$((uplink + downlink))
     local total_used=$((stored + current_total))
     local remaining=-1
@@ -155,8 +180,10 @@ get_user_usage() {
 update_account_usage() {
     local user="$1"
     local delta_up delta_down
-    delta_up=$(statsquery_sum "user>>>${user}>>>traffic>>>uplink" 1)
-    delta_down=$(statsquery_sum "user>>>${user}>>>traffic>>>downlink" 1)
+    local escaped_user
+    escaped_user=$(escape_xray_pattern "$user")
+    delta_up=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1)
+    delta_down=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1)
     local delta_total=$((delta_up + delta_down))
     if [ "$delta_total" -le 0 ]; then
         return
@@ -174,23 +201,48 @@ register_account() {
     local uuid="$3"
     local expiry="$4"
     local limit_gb="$5"
-    local configs_json="${6:-{}}"
+    local configs_json="${6:-}"
+    if [ -z "$configs_json" ]; then
+        configs_json='{}'
+    fi
     if ! validate_limit_gb "$limit_gb"; then
         echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
         return 1
     fi
-    if jq -e --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH" >/dev/null; then
-        echo "User already exists in quota DB. Use set-limit to update existing user."
-        return 1
-    fi
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local limit_bytes
     if [ "$limit_gb" -eq 0 ]; then
         limit_bytes=0
     else
         limit_bytes=$(gb_to_bytes "$limit_gb")
     fi
-    local now
-    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    if jq -e --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH" >/dev/null; then
+        local tmp_existing
+        tmp_existing=$(mktemp)
+        backup_db
+        jq --arg user "$user" \
+            --arg protocol "$protocol" \
+            --arg uuid "$uuid" \
+            --arg expiry "$expiry" \
+            --arg created "$now" \
+            --argjson limit_bytes "$limit_bytes" \
+            --argjson configs "$configs_json" '
+            (.users[] | select(.username==$user)) |= (
+                .id = $uuid
+                | .email = $user
+                | .protocol = $protocol
+                | .expiry = $expiry
+                | .configs = $configs
+                | .created |= (if . == null or . == "" then $created else . end)
+                | .bandwidth.limit_bytes = $limit_bytes
+                | .bandwidth.used_bytes |= (. // 0)
+                | .bandwidth.last_reset |= (if . == null or . == "" then $created else . end)
+                | .status |= (if . == null or . == "" then "active" else . end)
+            )
+        ' "$DB_PATH" > "$tmp_existing" && mv "$tmp_existing" "$DB_PATH"
+        return 0
+    fi
     local tmp
     tmp=$(mktemp)
     backup_db
@@ -431,8 +483,10 @@ enable_user() {
 
 reset_bandwidth() {
     local user="$1"
-    statsquery_sum "user>>>${user}>>>traffic>>>uplink" 1 >/dev/null
-    statsquery_sum "user>>>${user}>>>traffic>>>downlink" 1 >/dev/null
+    local escaped_user
+    escaped_user=$(escape_xray_pattern "$user")
+    statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1 >/dev/null
+    statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1 >/dev/null
     local now
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local tmp
@@ -609,9 +663,9 @@ show_user() {
     echo "Expiry      : $(echo "$record" | jq -r '.expiry')"
     echo "Status      : $(echo "$record" | jq -r '.status' | tr '[:lower:]' '[:upper:]')"
     echo "Bandwidth   : ${limit_label}"
-    echo "Used        : $(bytes_to_gb "$used_bytes") GB"
+    echo "Used        : $(format_usage_value "$used_bytes")"
     echo "Remaining   : ${remaining_label}"
-    echo "Usage       : $(usage_bar "$used_bytes" "$limit_bytes") $(bytes_to_gb "$used_bytes") GB / ${limit_label} (${percent}%)"
+    echo "Usage       : $(usage_bar "$used_bytes" "$limit_bytes") $(format_usage_value "$used_bytes") / ${limit_label} (${percent}%)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
@@ -646,12 +700,12 @@ dashboard() {
             limit_label="$(bytes_to_gb "$limit") GB"
         fi
         local used_label
-        used_label="$(bytes_to_gb "$used_bytes") GB"
+        used_label="$(format_usage_value "$used_bytes")"
         local remaining_label
         if [ "$limit" -le 0 ]; then
             remaining_label="∞"
         else
-            remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
+            remaining_label="$(format_usage_value "$remaining_bytes")"
         fi
         printf "%-3s %-12s %-9s %-12s %-9s %-12s %-9s %-10s\n" \
             "$idx" \
@@ -819,7 +873,7 @@ main() {
     local cmd="${1:-}"
     case "$cmd" in
         register)
-            register_account "$2" "$3" "$4" "$5" "$6" "${7:-{}}"
+            register_account "$2" "$3" "$4" "$5" "$6" "${7:-}"
             ;;
         usage)
             get_user_usage "$2"

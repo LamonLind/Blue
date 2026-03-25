@@ -182,8 +182,8 @@ update_account_usage() {
     local delta_up delta_down
     local escaped_user
     escaped_user=$(escape_xray_pattern "$user")
-    delta_up=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1)
-    delta_down=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1)
+    delta_up=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 0)
+    delta_down=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 0)
     local delta_total=$((delta_up + delta_down))
     if [ "$delta_total" -le 0 ]; then
         return
@@ -601,6 +601,12 @@ enforce_quotas() {
                 send_webhook "$user" "$used" "$limit"
             fi
         fi
+    done
+    for user in $users; do
+        local escaped_user
+        escaped_user=$(escape_xray_pattern "$user")
+        statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1 >/dev/null
+        statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1 >/dev/null
     done
 }
 

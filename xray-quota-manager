@@ -17,6 +17,18 @@ LOG_FILE="${XRAY_BW_LOG_FILE:-/var/log/xray-bandwidth-monitor.log}"
 API_SERVER="${XRAY_API_SERVER:-127.0.0.1:10085}"
 XRAY_BIN="${XRAY_BINARY:-/usr/local/bin/xray}"
 
+resolve_xray_bin() {
+    if [ ! -x "$XRAY_BIN" ]; then
+        if command -v xray >/dev/null 2>&1; then
+            XRAY_BIN="$(command -v xray)"
+        elif [ -x /usr/bin/xray ]; then
+            XRAY_BIN="/usr/bin/xray"
+        fi
+    fi
+}
+
+resolve_xray_bin
+
 db_init() {
     mkdir -p "$(dirname "$DB_FILE")" 2>/dev/null || true
     [ ! -f "$DB_FILE" ] && echo '{"accounts":[]}' > "$DB_FILE"
@@ -424,6 +436,7 @@ set_limit() {
 legacy_set() {
     local username="$2"
     local limit_input="$3"
+    local uuid="$4"
     [ -z "$username" ] || [ -z "$limit_input" ] && { echo -e "${RED}Usage: $0 set <username> <limit>${NC}"; exit 1; }
     local existing_uuid
     existing_uuid=$(find_uuid_by_username "$username")
@@ -431,7 +444,7 @@ legacy_set() {
         set_limit set-limit "$username" "$limit_input"
         return
     fi
-    create_account create "$username" "$limit_input" "30" ""
+    create_account create "$username" "$limit_input" "30" "$uuid"
 }
 
 legacy_get() {

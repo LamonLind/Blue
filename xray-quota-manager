@@ -709,13 +709,19 @@ sync_missing_users() {
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local tmp_db
     tmp_db=$(mktemp)
-    cp "$DB_PATH" "$tmp_db"
+    if [ -f "$DB_PATH" ]; then
+        cp "$DB_PATH" "$tmp_db"
+    else
+        echo '{"users":[]}' > "$tmp_db"
+    fi
+    local existing_users
+    existing_users=$(jq -r '.users[]?.username' "$tmp_db")
     local added=0
     while IFS='|' read -r user protocol expiry uuid; do
         if [ -z "$user" ]; then
             continue
         fi
-        if ! jq -e --arg user "$user" '.users[]? | select(.username==$user)' "$tmp_db" >/dev/null; then
+        if ! grep -Fxq "$user" <<< "$existing_users"; then
             jq --arg user "$user" \
                 --arg protocol "$protocol" \
                 --arg uuid "$uuid" \
@@ -737,6 +743,7 @@ sync_missing_users() {
                     configs: {}
                 }]' "$tmp_db" > "${tmp_db}.next" && mv "${tmp_db}.next" "$tmp_db"
             added=$((added + 1))
+            existing_users="${existing_users}"$'\n'"$user"
         fi
     done < <(config_user_records)
     if [ "$added" -gt 0 ]; then

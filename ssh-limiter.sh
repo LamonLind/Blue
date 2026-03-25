@@ -547,8 +547,12 @@ check_and_enforce_limits() {
                 assign_process_to_cgroup "$pid" "$username"
             done
             
-            # Update state
-            update_user_record "$username" "$quota_mb" "$limit_kbps" "$total_usage" "LIMITED"
+            # Update state to LIMITED but keep stored_usage unchanged (do NOT save
+            # total_usage into stored_usage here — iptables counters are cumulative and
+            # never reset between monitoring cycles, so persisting total_usage as the
+            # new baseline would double-count all previous traffic on every subsequent
+            # cycle).
+            update_user_record "$username" "$quota_mb" "$limit_kbps" "$stored_usage" "LIMITED"
             
             # Send alert if configured
             if [ -n "$ALERT_EMAIL" ] && command -v mail &>/dev/null; then
@@ -556,10 +560,12 @@ check_and_enforce_limits() {
                     mail -s "SSH Bandwidth Limit Alert: $username" "$ALERT_EMAIL" 2>/dev/null || true
             fi
         elif [ "$state" = "LIMITED" ]; then
-            # Already limited, update usage
-            update_user_record "$username" "$quota_mb" "$limit_kbps" "$total_usage" "LIMITED"
-            
-            # Ensure processes are in cgroup
+            # Already limited — ensure processes are in cgroup.
+            # Do NOT update stored_usage here: the iptables counter (current_traffic)
+            # is cumulative for the life of the tracking chain, so total_usage is
+            # always correctly computed on-the-fly as stored_usage + current_traffic.
+            # Persisting total_usage back into stored_usage each cycle would
+            # double-count those iptables bytes on every subsequent iteration.
             pgrep -u "$username" | while read -r pid; do
                 assign_process_to_cgroup "$pid" "$username"
             done
@@ -574,6 +580,17 @@ _run_daemon_loop() {
     
     # Write PID file
     echo $$ > "$PID_FILE"
+    
+    # Re-initialize iptables tracking for all monitored users.
+    # This handles server reboots where iptables chains were cleared:
+    # without this, get_user_traffic_bytes() returns 0 for every user
+    # because the tracking chain no longer exists.
+    if [ -s "$USAGE_DB" ]; then
+        while IFS='|' read -r username rest; do
+            [ -z "$username" ] && continue
+            initialize_iptables_tracking "$username" 2>/dev/null || true
+        done < "$USAGE_DB"
+    fi
     
     while true; do
         check_and_enforce_limits

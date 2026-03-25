@@ -104,7 +104,7 @@ echo "Press Enter for unlimited"
 read -p "Quota: " quota_limit
 if [ -n "$quota_limit" ]; then
     # Set quota using quota manager
-    /usr/bin/xray-quota-manager set "$user" "$quota_limit" 2>/dev/null
+    /usr/bin/xray-quota-manager create "$user" "$quota_limit" "$exp" "$uuid" 2>/dev/null
 fi
 
 sed -i '/#trojanws$/a\#tr '"$user $exp"'\

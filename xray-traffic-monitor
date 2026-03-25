@@ -1,0 +1,196 @@
+#!/bin/bash
+# xray-traffic-monitor
+# Background daemon — mirrors 3x-UI XrayTrafficJob (web/job/xray_traffic_job.go)
+# and disableInvalidClients (web/service/inbound.go).
+# Runs in a loop: poll Xray stats, accumulate Up/Down/AllTime per user,
+# then enforce quotas and expiry exactly as 3x-UI does.
+# Author: LamonLind
+
+# ---------------------------------------------------------------------------
+# Configuration (override via environment)
+# ---------------------------------------------------------------------------
+DB="${DB:-/etc/xray/quota-db.json}"
+XRAY_CFG="${XRAY_CFG:-/etc/xray/config.json}"
+API_ADDR="${API_ADDR:-127.0.0.1:10085}"
+LOG="${LOG:-/var/log/xray-quota.log}"
+POLL="${POLL:-60}"          # seconds between cycles (3x-UI default ≈ 60 s)
+WEBHOOK="${WEBHOOK:-}"      # optional POST URL for disable notifications
+
+# ---------------------------------------------------------------------------
+# Xray binary
+# ---------------------------------------------------------------------------
+_find_xray() {
+    command -v xray &>/dev/null && { command -v xray; return; }
+    for p in /usr/bin/xray /usr/local/bin/xray /opt/xray/xray; do
+        [ -x "$p" ] && { echo "$p"; return; }
+    done
+    echo ""
+}
+XRAY_BIN="$(_find_xray)"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+_log() { printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" | tee -a "$LOG"; }
+
+# ---------------------------------------------------------------------------
+# DB helpers
+# ---------------------------------------------------------------------------
+_db_q() { jq -r "$1" "$DB" 2>/dev/null; }
+_db_w() {
+    local tmp; tmp="$(mktemp)"
+    jq "$1" "$DB" > "$tmp" && mv "$tmp" "$DB"
+}
+
+# ---------------------------------------------------------------------------
+# Query per-email traffic delta — mirrors GetTraffic (xray/api.go)
+# Uses -reset so each poll returns only bytes since the last poll (delta).
+# Parses clientTrafficRegex: user>>>EMAIL>>>traffic>>>(uplink|downlink)
+# Outputs two integers: UP_BYTES DOWN_BYTES
+# ---------------------------------------------------------------------------
+_query_delta() {
+    local email="$1"
+    [ -z "$XRAY_BIN" ] && { echo "0 0"; return; }
+
+    local raw
+    raw="$("$XRAY_BIN" api statsquery \
+            -server="$API_ADDR" \
+            -name "user>>>$email>>>traffic" \
+            -reset 2>/dev/null)" || { echo "0 0"; return; }
+
+    local up=0 dn=0 last_dir=""
+    while IFS= read -r line; do
+        case "$line" in
+            *uplink\"*)   last_dir="up" ;;
+            *downlink\"*) last_dir="dn" ;;
+            *value:*)
+                local v; v=$(printf '%s' "$line" | grep -oE '[0-9]+$')
+                case "$last_dir" in
+                    up) up=$(( up + ${v:-0} )) ;;
+                    dn) dn=$(( dn + ${v:-0} )) ;;
+                esac
+                last_dir="" ;;
+        esac
+    done <<< "$raw"
+
+    echo "$up $dn"
+}
+
+# ---------------------------------------------------------------------------
+# Accumulate delta — mirrors addClientTraffic:
+#   Up += delta.Up   Down += delta.Down   AllTime += delta.Up + delta.Down
+# ---------------------------------------------------------------------------
+_accumulate() {
+    local username="$1"
+    local email; email=$(_db_q ".users[] | select(.username==\"$username\") | .email")
+    [ -z "$email" ] && return 1
+
+    local pair; pair=$(_query_delta "$email")
+    local du dd
+    du=$(echo "$pair" | cut -d' ' -f1)
+    dd=$(echo "$pair" | cut -d' ' -f2)
+    du=${du:-0}; dd=${dd:-0}
+    [ $(( du + dd )) -gt 0 ] || return 0
+
+    _db_w ".users |= map(
+        if .username == \"$username\" then
+            .up       += $du |
+            .down     += $dd |
+            .all_time += $(( du + dd ))
+        else . end)"
+    _log INFO "Delta +${du}↑ +${dd}↓ → $username"
+}
+
+# ---------------------------------------------------------------------------
+# Quota check — mirrors disableInvalidClients:
+#   total > 0 AND up + down >= total
+# ---------------------------------------------------------------------------
+_quota_exceeded() {
+    local username="$1"
+    local total; total=$(_db_q ".users[] | select(.username==\"$username\") | .total // 0")
+    [ "${total:-0}" -eq 0 ] 2>/dev/null && return 1
+    local up; up=$(_db_q ".users[] | select(.username==\"$username\") | .up   // 0")
+    local dn; dn=$(_db_q ".users[] | select(.username==\"$username\") | .down // 0")
+    [ $(( ${up:-0} + ${dn:-0} )) -ge "$total" ]
+}
+
+# ---------------------------------------------------------------------------
+# Expiry check — mirrors disableInvalidClients:
+#   expiry_time > 0 AND expiry_time <= now   (we store YYYY-MM-DD)
+# ---------------------------------------------------------------------------
+_expired() {
+    local username="$1"
+    local exp; exp=$(_db_q ".users[] | select(.username==\"$username\") | .expiry // \"never\"")
+    [ "$exp" = "never" ] || [ -z "$exp" ] && return 1
+    [[ "$exp" < "$(date '+%Y-%m-%d')" ]]
+}
+
+# ---------------------------------------------------------------------------
+# Disable user — equivalent to xrayApi.RemoveUser + enable=false in DB
+# ---------------------------------------------------------------------------
+_disable() {
+    local username="$1" reason="$2"
+    local email; email=$(_db_q ".users[] | select(.username==\"$username\") | .email")
+    [ -z "$email" ] && return 1
+
+    [ -f "$XRAY_CFG" ] && {
+        cp "$XRAY_CFG" "${XRAY_CFG}.bak"
+        jq --arg e "$email" \
+            '(.inbounds[].settings.clients? // []) |= map(select(.email != $e))' \
+            "$XRAY_CFG" > /tmp/_xqmon.json && mv /tmp/_xqmon.json "$XRAY_CFG"
+        systemctl restart xray 2>/dev/null || true
+    }
+    _db_w ".users |= map(if .username == \"$username\" then .enable = false else . end)"
+    _log WARN "DISABLED $username ($email) reason=$reason"
+    _notify "$username" "$email" "$reason"
+}
+
+# ---------------------------------------------------------------------------
+# Webhook notification (optional)
+# ---------------------------------------------------------------------------
+_notify() {
+    [ -z "$WEBHOOK" ] && return 0
+    local username="$1" email="$2" reason="$3"
+    local up dn total
+    up=$(_db_q    ".users[] | select(.username==\"$username\") | .up    // 0")
+    dn=$(_db_q    ".users[] | select(.username==\"$username\") | .down  // 0")
+    total=$(_db_q ".users[] | select(.username==\"$username\") | .total // 0")
+    local body
+    body=$(printf '{"username":"%s","email":"%s","reason":"%s","up":%s,"down":%s,"total":%s,"time":"%s"}' \
+        "$username" "$email" "$reason" "${up:-0}" "${dn:-0}" "${total:-0}" \
+        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "$body" "$WEBHOOK" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
+# One enforcement cycle — mirrors XrayTrafficJob.Run:
+#   1. accumulate traffic deltas for all enabled users
+#   2. disable users whose quota or expiry is exceeded
+# ---------------------------------------------------------------------------
+_cycle() {
+    [ -f "$DB" ] || { _log WARN "DB not found; skipping"; return; }
+
+    local users
+    mapfile -t users < <(_db_q '.users[] | select(.enable == true) | .username')
+    for u in "${users[@]}"; do
+        [ -z "$u" ] && continue
+        _accumulate "$u"
+        _expired        "$u" && { _disable "$u" "expired";        continue; }
+        _quota_exceeded "$u" && { _disable "$u" "quota_exceeded"; continue; }
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Graceful stop
+# ---------------------------------------------------------------------------
+trap '_log INFO "xray-traffic-monitor stopping"; exit 0' SIGTERM SIGINT
+
+# ---------------------------------------------------------------------------
+# Main loop
+# ---------------------------------------------------------------------------
+_log INFO "xray-traffic-monitor started (PID=$$, poll=${POLL}s)"
+while true; do
+    _cycle
+    sleep "$POLL"
+done

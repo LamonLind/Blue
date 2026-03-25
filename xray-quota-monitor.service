@@ -1,0 +1,21 @@
+[Unit]
+Description=Xray Bandwidth Quota Monitor
+Documentation=https://github.com/LamonLind/Blue
+After=network.target xray.service
+Wants=xray.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/xray-traffic-monitor
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+# Allow overriding poll interval and webhook via drop-in
+Environment=POLL=60
+Environment=WEBHOOK=
+
+[Install]
+WantedBy=multi-user.target

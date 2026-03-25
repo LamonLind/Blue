@@ -1,0 +1,627 @@
+#!/bin/bash
+# xray-quota-manager
+# Bandwidth quota management for Xray users.
+# Data model mirrors 3x-UI xray/client_traffic.go:
+#   email, up, down, all_time, total (bytes), expiry, enable, uuid, protocol
+# Traffic logic mirrors web/service/inbound.go (addClientTraffic,
+#   disableInvalidClients, ResetClientTraffic).
+# Author: LamonLind
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+readonly DB=/etc/xray/quota-db.json
+readonly XRAY_CFG=/etc/xray/config.json
+readonly API_ADDR="127.0.0.1:10085"
+readonly LOG=/var/log/xray-quota.log
+
+# ---------------------------------------------------------------------------
+# Colours
+# ---------------------------------------------------------------------------
+R='\033[0;31m' G='\033[0;32m' Y='\033[0;33m'
+B='\033[0;34m' C='\033[0;36m' NC='\033[0m' BOLD='\e[1m'
+
+# ---------------------------------------------------------------------------
+# Xray binary resolution
+# ---------------------------------------------------------------------------
+_find_xray() {
+    if command -v xray &>/dev/null; then
+        command -v xray; return
+    fi
+    for p in /usr/bin/xray /usr/local/bin/xray /opt/xray/xray; do
+        [ -x "$p" ] && { echo "$p"; return; }
+    done
+    echo ""
+}
+XRAY_BIN="$(_find_xray)"
+
+# ---------------------------------------------------------------------------
+# Root guard
+# ---------------------------------------------------------------------------
+[ "${EUID}" -ne 0 ] && { echo -e "${R}Run as root.${NC}"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+_log() { printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$2" >> "$LOG"; }
+
+# ---------------------------------------------------------------------------
+# Database — JSON file, schema per 3x-UI ClientTraffic
+# Fields: username email uuid protocol up down all_time total expiry enable
+# ---------------------------------------------------------------------------
+_db_init() {
+    [ -f "$DB" ] && return
+    printf '{"users":[]}\n' > "$DB"
+    chmod 600 "$DB"
+}
+
+_db_q()  { jq -r "$1" "$DB" 2>/dev/null; }   # read
+_db_w()  {                                     # atomic write
+    local tmp; tmp="$(mktemp)"
+    jq "$1" "$DB" > "$tmp" && mv "$tmp" "$DB"
+}
+
+# ---------------------------------------------------------------------------
+# Ensure Xray stats API is fully wired in config.json
+# Checks all five components that 3x-UI configures:
+#   1. policy.system statsUserUplink / statsUserDownlink flags
+#   2. stats object
+#   3. api object with StatsService
+#   4. dokodemo-door inbound on 127.0.0.1:10085 tagged "api"
+#   5. routing rule: inboundTag api → outboundTag api
+# ---------------------------------------------------------------------------
+ensure_stats_api() {
+    [ -f "$XRAY_CFG" ] || { echo -e "${R}$XRAY_CFG not found.${NC}"; return 1; }
+    local dirty=0
+
+    _patch() {
+        jq "$1" "$XRAY_CFG" > /tmp/_xqm.json && mv /tmp/_xqm.json "$XRAY_CFG"
+        dirty=1
+    }
+
+    # 1. policy flags
+    jq -e '.policy.system.statsUserUplink == true' "$XRAY_CFG" &>/dev/null \
+        || _patch '.policy.system.statsUserUplink = true'
+    jq -e '.policy.system.statsUserDownlink == true' "$XRAY_CFG" &>/dev/null \
+        || _patch '.policy.system.statsUserDownlink = true'
+
+    # 2. stats object
+    jq -e '.stats' "$XRAY_CFG" &>/dev/null \
+        || _patch '.stats = {}'
+
+    # 3. api object
+    jq -e '.api.tag == "api"' "$XRAY_CFG" &>/dev/null \
+        || _patch '.api = {"tag":"api","services":["StatsService"]}'
+
+    # 4. dokodemo-door inbound
+    jq -e '.inbounds[] | select(.tag=="api" and .protocol=="dokodemo-door")' \
+        "$XRAY_CFG" &>/dev/null \
+        || _patch '.inbounds += [{"listen":"127.0.0.1","port":10085,
+                   "protocol":"dokodemo-door",
+                   "settings":{"address":"127.0.0.1"},"tag":"api"}]'
+
+    # 5. routing rule
+    jq -e '.routing.rules[] | select(.inboundTag[]? == "api")' \
+        "$XRAY_CFG" &>/dev/null 2>&1 \
+        || _patch '.routing.rules = [{"inboundTag":["api"],"outboundTag":"api","type":"field"}]
+                   + .routing.rules'
+
+    [ "$dirty" -eq 1 ] && {
+        _log INFO "Stats API config patched; restarting xray"
+        systemctl restart xray 2>/dev/null || true
+        sleep 2
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Traffic query — mirrors 3x-UI GetTraffic (api.go) via CLI
+# Calls: xray api statsquery -server ADDR -name "user>>>EMAIL>>>traffic" -reset
+# Parses proto-text output matching clientTrafficRegex:
+#   user>>>EMAIL>>>traffic>>>(uplink|downlink)
+# Returns two numbers on stdout: UP_BYTES DOWN_BYTES
+# Always uses -reset so counters are drained (delta-based, same as 3x-UI).
+# ---------------------------------------------------------------------------
+_query_delta() {
+    local email="$1"
+    [ -z "$XRAY_BIN" ] && { echo "0 0"; return; }
+
+    local raw
+    raw="$("$XRAY_BIN" api statsquery \
+            -server="$API_ADDR" \
+            -name "user>>>$email>>>traffic" \
+            -reset 2>/dev/null)" || { echo "0 0"; return; }
+
+    # Parse paired (name, value) lines from proto-text output
+    local up=0 down=0 last_dir=""
+    while IFS= read -r line; do
+        case "$line" in
+            *uplink\"*)   last_dir="up" ;;
+            *downlink\"*) last_dir="down" ;;
+            *value:*)
+                local v; v=$(printf '%s' "$line" | grep -oE '[0-9]+$')
+                case "$last_dir" in
+                    up)   up=$(( up   + ${v:-0} )) ;;
+                    down) down=$(( down + ${v:-0} )) ;;
+                esac
+                last_dir=""
+                ;;
+        esac
+    done <<< "$raw"
+
+    echo "$up $down"
+}
+
+# ---------------------------------------------------------------------------
+# Accumulate delta into DB — mirrors addClientTraffic:
+#   Up += delta.Up  Down += delta.Down  AllTime += delta.Up + delta.Down
+# ---------------------------------------------------------------------------
+_accumulate() {
+    local username="$1"
+    local email; email=$(_db_q ".users[] | select(.username==\"$username\") | .email")
+    [ -z "$email" ] && return 1
+
+    local pair; pair=$(_query_delta "$email")
+    local du dd
+    du=$(echo "$pair" | cut -d' ' -f1)
+    dd=$(echo "$pair" | cut -d' ' -f2)
+    du=${du:-0}; dd=${dd:-0}
+
+    local delta=$(( du + dd ))
+    [ "$delta" -gt 0 ] || return 0
+
+    _db_w ".users |= map(
+        if .username == \"$username\" then
+            .up       += $du |
+            .down     += $dd |
+            .all_time += $delta
+        else . end)"
+    _log INFO "Delta +${du}↑ +${dd}↓ for $username"
+}
+
+# ---------------------------------------------------------------------------
+# Quota exceeded? — mirrors disableInvalidClients condition:
+#   total > 0 AND up + down >= total
+# ---------------------------------------------------------------------------
+_quota_exceeded() {
+    local username="$1"
+    local total; total=$(_db_q ".users[] | select(.username==\"$username\") | .total")
+    [ -z "$total" ] || [ "$total" -eq 0 ] 2>/dev/null && return 1
+    local up; up=$(_db_q ".users[] | select(.username==\"$username\") | .up // 0")
+    local dn; dn=$(_db_q ".users[] | select(.username==\"$username\") | .down // 0")
+    [ $(( ${up:-0} + ${dn:-0} )) -ge "$total" ]
+}
+
+# ---------------------------------------------------------------------------
+# Expired? — mirrors disableInvalidClients condition:
+#   expiry_time > 0 AND expiry_time <= now
+# (We store YYYY-MM-DD; "never" means no expiry.)
+# ---------------------------------------------------------------------------
+_expired() {
+    local username="$1"
+    local exp; exp=$(_db_q ".users[] | select(.username==\"$username\") | .expiry // \"never\"")
+    [ "$exp" = "never" ] || [ -z "$exp" ] && return 1
+    [[ "$exp" < "$(date '+%Y-%m-%d')" ]]
+}
+
+# ---------------------------------------------------------------------------
+# Bytes → human-readable
+# ---------------------------------------------------------------------------
+_b2h() {
+    local b=${1:-0}
+    [ "$b" -le 0 ] 2>/dev/null && { echo "0.00 GB"; return; }
+    printf "%.2f GB\n" "$(echo "scale=2; $b / 1073741824" | bc)"
+}
+
+# ---------------------------------------------------------------------------
+# ASCII progress bar (width 20, mirrors 3x-UI UI)
+# ---------------------------------------------------------------------------
+_bar() {
+    local used=$1 total=$2 w=20
+    if [ -z "$total" ] || [ "$total" -eq 0 ] 2>/dev/null; then
+        printf "∞  (Unlimited)"; return
+    fi
+    local pct; pct=$(( used * 100 / total ))
+    [ "$pct" -gt 100 ] && pct=100
+    local f=$(( pct * w / 100 )) e=$(( w - f * w / 100 - (w - w * pct / 100) ))
+    # simpler: just use pct/5 for filled blocks
+    f=$(( pct / (100 / w) )); e=$(( w - f ))
+    local bar="" i
+    for (( i=0; i<f; i++ )); do bar="${bar}█"; done
+    for (( i=0; i<e; i++ )); do bar="${bar}░"; done
+    printf "[%s] %d%%" "$bar" "$pct"
+}
+
+# ---------------------------------------------------------------------------
+# Disable user
+# Removes email from every inbound clients array in config.json then restarts.
+# Equivalent to 3x-UI xrayApi.RemoveUser (api.go) adapted for bash/JSON.
+# Sets enable = false in DB.
+# ---------------------------------------------------------------------------
+disable_user() {
+    local username="$1" reason="${2:-manual}"
+    local email; email=$(_db_q ".users[] | select(.username==\"$username\") | .email")
+    [ -z "$email" ] && { echo -e "${R}User not found: $username${NC}"; return 1; }
+
+    [ -f "$XRAY_CFG" ] && {
+        cp "$XRAY_CFG" "${XRAY_CFG}.bak"
+        jq --arg e "$email" \
+            '(.inbounds[].settings.clients? // []) |= map(select(.email != $e))' \
+            "$XRAY_CFG" > /tmp/_xqm.json && mv /tmp/_xqm.json "$XRAY_CFG"
+        systemctl restart xray 2>/dev/null || true
+    }
+    _db_w ".users |= map(if .username == \"$username\" then .enable = false else . end)"
+    _log INFO "DISABLED $username ($email) reason=$reason"
+    echo -e "[${R} DISABLED ${NC}] $username"
+}
+
+# ---------------------------------------------------------------------------
+# Enable user
+# Equivalent to 3x-UI xrayApi.AddUser — re-injects the saved client object.
+# Sets enable = true in DB.
+# ---------------------------------------------------------------------------
+enable_user() {
+    local username="$1"
+    local email uuid proto
+    email=$(_db_q ".users[] | select(.username==\"$username\") | .email")
+    uuid=$(_db_q  ".users[] | select(.username==\"$username\") | .uuid")
+    proto=$(_db_q ".users[] | select(.username==\"$username\") | .protocol")
+    [ -z "$email" ] && { echo -e "${R}User not found: $username${NC}"; return 1; }
+
+    [ -f "$XRAY_CFG" ] && {
+        local obj; obj=$(jq -n \
+            --arg id    "$uuid" \
+            --arg email "$email" \
+            '{"id":$id,"flow":"","email":$email,"limitIp":0,
+              "totalGB":0,"expiryTime":0,"enable":true,
+              "tgId":"","subId":"","reset":0}')
+        cp "$XRAY_CFG" "${XRAY_CFG}.bak"
+        jq --arg proto "$proto" --argjson obj "$obj" \
+            '(.inbounds[] | select(.protocol==$proto) | .settings.clients?) += [$obj]' \
+            "$XRAY_CFG" > /tmp/_xqm.json && mv /tmp/_xqm.json "$XRAY_CFG"
+        systemctl restart xray 2>/dev/null || true
+    }
+    _db_w ".users |= map(if .username == \"$username\" then .enable = true else . end)"
+    _log INFO "ENABLED $username ($email)"
+    echo -e "[${G} ENABLED ${NC}] $username"
+}
+
+# ---------------------------------------------------------------------------
+# Reset bandwidth — mirrors ResetClientTraffic:
+#   Up = 0, Down = 0, Enable = true   (AllTime is NOT reset — permanent log)
+# Drains Xray stats counter first so leftover bytes don't spill into next session.
+# ---------------------------------------------------------------------------
+reset_bandwidth() {
+    local username="$1"
+    local email; email=$(_db_q ".users[] | select(.username==\"$username\") | .email")
+    [ -z "$email" ] && { echo -e "${R}User not found: $username${NC}"; return 1; }
+
+    [ -n "$XRAY_BIN" ] && "$XRAY_BIN" api statsquery \
+        -server="$API_ADDR" -name "user>>>$email>>>traffic" -reset \
+        >/dev/null 2>&1 || true
+
+    _db_w ".users |= map(if .username == \"$username\" then
+        .up   = 0 |
+        .down = 0
+    else . end)"
+
+    local enabled; enabled=$(_db_q ".users[] | select(.username==\"$username\") | .enable")
+    [ "$enabled" = "false" ] && enable_user "$username"
+
+    _log INFO "Bandwidth reset for $username"
+    echo -e "[${G} RESET ${NC}] Bandwidth counters zeroed for $username (all-time preserved)."
+}
+
+# ---------------------------------------------------------------------------
+# Update quota limit
+# Mirrors UpdateClientStat: client.TotalGB → total_bytes stored in DB.
+# Accepts 0 for unlimited.
+# ---------------------------------------------------------------------------
+set_quota() {
+    local username="$1" gb="$2"
+    [[ "$gb" =~ ^[0-9]+$ ]] && [ "$gb" -le 10000 ] || {
+        echo -e "${R}Quota must be an integer 0–10000 GB (0 = unlimited).${NC}"; return 1; }
+    local bytes=0
+    [ "$gb" -gt 0 ] && bytes=$(echo "$gb * 1073741824" | bc)
+    _db_w ".users |= map(if .username == \"$username\" then .total = $bytes else . end)"
+    _log INFO "Quota for $username → ${gb}GB"
+    echo -e "[${G} OK ${NC}] Quota set to ${gb} GB for $username."
+}
+
+# ---------------------------------------------------------------------------
+# Show usage for one user
+# ---------------------------------------------------------------------------
+show_usage() {
+    local username="$1"
+    _accumulate "$username" 2>/dev/null || true
+
+    local up dn at total exp en
+    up=$(_db_q    ".users[] | select(.username==\"$username\") | .up       // 0")
+    dn=$(_db_q    ".users[] | select(.username==\"$username\") | .down     // 0")
+    at=$(_db_q    ".users[] | select(.username==\"$username\") | .all_time // 0")
+    total=$(_db_q ".users[] | select(.username==\"$username\") | .total    // 0")
+    exp=$(_db_q   ".users[] | select(.username==\"$username\") | .expiry   // \"never\"")
+    en=$(_db_q    ".users[] | select(.username==\"$username\") | .enable   // true")
+
+    local session=$(( ${up:-0} + ${dn:-0} ))
+    local lim_h rem_h
+    if [ "${total:-0}" -eq 0 ]; then
+        lim_h="Unlimited"; rem_h="∞"
+    else
+        lim_h="$(_b2h "$total")"
+        local rem=$(( total - session )); [ "$rem" -lt 0 ] && rem=0
+        rem_h="$(_b2h "$rem")"
+    fi
+    local status_c; [ "$en" = "true" ] && status_c="${G}Active${NC}" || status_c="${R}Disabled${NC}"
+
+    printf '\n'
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    printf '  %-12s %s\n' "User:"      "${C}${username}${NC}"
+    printf '  %-12s %s\n' "Upload:"    "$(_b2h "${up:-0}")"
+    printf '  %-12s %s\n' "Download:"  "$(_b2h "${dn:-0}")"
+    printf '  %-12s %s\n' "Session:"   "${G}$(_b2h "$session")${NC}"
+    printf '  %-12s %s\n' "All-time:"  "$(_b2h "${at:-0}")"
+    printf '  %-12s %s\n' "Limit:"     "${Y}${lim_h}${NC}"
+    printf '  %-12s %s\n' "Remaining:" "$rem_h"
+    printf '  %-12s %s\n' "Expiry:"    "$exp"
+    printf '  %-12s ' "Status:"; echo -e "$status_c"
+    printf '  %-12s ' "Progress:"; _bar "$session" "${total:-0}"; printf '\n'
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
+}
+
+# ---------------------------------------------------------------------------
+# Enforce quotas — mirrors XrayTrafficJob.Run → addClientTraffic →
+#   disableInvalidClients for all active users.
+# ---------------------------------------------------------------------------
+enforce_quotas() {
+    local users
+    mapfile -t users < <(_db_q '.users[] | select(.enable == true) | .username')
+    for u in "${users[@]}"; do
+        [ -z "$u" ] && continue
+        _accumulate "$u"
+        _expired        "$u" && { disable_user "$u" "expired";         continue; }
+        _quota_exceeded "$u" && { disable_user "$u" "quota_exceeded";  continue; }
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Register a new account in the quota DB
+# Mirrors 3x-UI Client creation: stores up=0 down=0 all_time=0 enable=true
+# ---------------------------------------------------------------------------
+register_account() {
+    local username="$1" protocol="${2:-vless}" quota_gb="${3:-0}" expiry="${4:-never}"
+    local uuid="${5:-$(cat /proc/sys/kernel/random/uuid)}"
+
+    [[ "$username" =~ ^[a-zA-Z0-9_]+$ ]] || {
+        echo -e "${R}Username: letters, numbers, underscore only.${NC}"; return 1; }
+    _db_q ".users[] | select(.username==\"$username\")" | grep -q '"username"' && {
+        echo -e "${R}User '$username' already exists.${NC}"; return 1; }
+    [[ "$quota_gb" =~ ^[0-9]+$ ]] && [ "$quota_gb" -le 10000 ] || {
+        echo -e "${R}Quota must be 0–10000 GB.${NC}"; return 1; }
+
+    local domain; domain=$(cat /etc/xray/domain 2>/dev/null || hostname -f)
+    local email="${username}@${domain}"
+    local total=0
+    [ "$quota_gb" -gt 0 ] && total=$(echo "$quota_gb * 1073741824" | bc)
+    local qlabel; [ "$quota_gb" -eq 0 ] && qlabel="Unlimited" || qlabel="${quota_gb} GB"
+
+    _db_w ".users += [{
+        \"username\":  \"$username\",
+        \"email\":     \"$email\",
+        \"uuid\":      \"$uuid\",
+        \"protocol\":  \"$protocol\",
+        \"up\":        0,
+        \"down\":      0,
+        \"all_time\":  0,
+        \"total\":     $total,
+        \"expiry\":    \"$expiry\",
+        \"enable\":    true
+    }]"
+
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${G}${BOLD}         ✅  ACCOUNT REGISTERED IN QUOTA SYSTEM        ${NC}"
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    printf '  %-12s %s\n' "Username:"  "${C}$username${NC}"
+    printf '  %-12s %s\n' "Email:"     "${C}$email${NC}"
+    printf '  %-12s %s\n' "UUID:"      "${C}$uuid${NC}"
+    printf '  %-12s %s\n' "Protocol:"  "${C}${protocol^^}${NC}"
+    printf '  %-12s %s\n' "Bandwidth:" "${C}$qlabel (0 B used)${NC}"
+    printf '  %-12s %s\n' "Expiry:"    "${C}$expiry${NC}"
+    printf '  %-12s ' "Status:"; echo -e "${G}Active${NC}"
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    _log INFO "Registered $username ($email) quota=${quota_gb}GB expiry=$expiry"
+}
+
+# ---------------------------------------------------------------------------
+# User dashboard — tabular view of all users
+# ---------------------------------------------------------------------------
+_dashboard_list() {
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}  USER MANAGEMENT DASHBOARD${NC}"
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    printf "${BOLD}%-4s %-16s %-8s %-12s %-12s %-12s %-10s %-12s${NC}\n" \
+        "#" "Username" "Proto" "Limit" "Used" "Remaining" "Status" "Expiry"
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    local n=0
+    while IFS= read -r row; do
+        n=$(( n + 1 ))
+        local uname proto en exp total up dn
+        uname=$( echo "$row" | jq -r '.username')
+        proto=$(  echo "$row" | jq -r '.protocol // "vless"')
+        en=$(     echo "$row" | jq -r '.enable   // true')
+        exp=$(    echo "$row" | jq -r '.expiry   // "never"')
+        total=$(  echo "$row" | jq -r '.total    // 0')
+        up=$(     echo "$row" | jq -r '.up       // 0')
+        dn=$(     echo "$row" | jq -r '.down     // 0')
+
+        local sess=$(( ${up:-0} + ${dn:-0} ))
+        local lim_h used_h rem_h
+        used_h="$(_b2h "$sess")"
+        if [ "${total:-0}" -eq 0 ]; then
+            lim_h="Unlimited"; rem_h="∞"
+        else
+            lim_h="$(_b2h "$total")"
+            local r=$(( total - sess )); [ "$r" -lt 0 ] && r=0
+            rem_h="$(_b2h "$r")"
+        fi
+        local st; [ "$en" = "true" ] && st="${G}Active${NC}" || st="${R}Disabled${NC}"
+
+        printf "%-4s %-16s %-8s %-12s %-12s %-12s " \
+            "$n" "$uname" "${proto^^}" "$lim_h" "$used_h" "$rem_h"
+        echo -e "${st}   $exp"
+    done < <(jq -c '.users[]' "$DB" 2>/dev/null)
+
+    [ "$n" -eq 0 ] && echo -e "  ${Y}No users registered.${NC}"
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+dashboard() {
+    while true; do
+        clear
+        _dashboard_list
+        echo ""
+        echo -e "  [1] View user details   [2] Reset bandwidth"
+        echo -e "  [3] Set quota           [4] Enable / Disable"
+        echo -e "  [5] Remove from DB      [6] Refresh usage now"
+        echo -e "  [0] Back"
+        echo ""
+        read -rp "Option: " o
+        case "$o" in
+            1) read -rp "Username: " u; show_usage "$u"
+               read -n1 -s -r -p "Press any key…" ;;
+            2) read -rp "Username: " u; reset_bandwidth "$u"
+               read -n1 -s -r -p "Press any key…" ;;
+            3) read -rp "Username: " u; read -rp "New quota GB (0=unlimited): " g
+               set_quota "$u" "$g"; read -n1 -s -r -p "Press any key…" ;;
+            4) read -rp "Username: " u
+               local en; en=$(_db_q ".users[] | select(.username==\"$u\") | .enable")
+               [ "$en" = "true" ] && disable_user "$u" "manual" || enable_user "$u"
+               read -n1 -s -r -p "Press any key…" ;;
+            5) read -rp "Username to remove: " u
+               read -rp "Confirm remove '$u' from quota DB? [y/N]: " c
+               [[ "$c" =~ ^[Yy]$ ]] && {
+                   _db_w ".users |= map(select(.username != \"$u\"))"
+                   _log INFO "Removed $u from quota DB"
+                   echo -e "[${G} OK ${NC}] $u removed."; }
+               read -n1 -s -r -p "Press any key…" ;;
+            6) echo "Refreshing…"
+               mapfile -t us < <(_db_q '.users[] | select(.enable==true) | .username')
+               for u in "${us[@]}"; do _accumulate "$u" && echo "  ✔ $u"; done
+               echo "Done."; read -n1 -s -r -p "Press any key…" ;;
+            0) return ;;
+            *) echo -e "${R}Invalid.${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Interactive create wizard
+# ---------------------------------------------------------------------------
+wizard_create() {
+    clear
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BOLD}  CREATE ACCOUNT WITH BANDWIDTH QUOTA${NC}"
+    echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    local username
+    while true; do
+        read -rp "Username: " username
+        [[ "$username" =~ ^[a-zA-Z0-9_]+$ ]] \
+            && ! (_db_q ".users[] | select(.username==\"$username\")" | grep -q '"username"') \
+            && break
+        echo -e "${R}Invalid or already taken.${NC}"
+    done
+
+    echo "Protocol: [1] VLESS  [2] VMESS  [3] Trojan  [4] Shadowsocks"
+    read -rp "Select [1]: " psel
+    local proto
+    case "$psel" in
+        2) proto="vmess" ;; 3) proto="trojan" ;;
+        4) proto="shadowsocks" ;; *) proto="vless" ;;
+    esac
+
+    local gb
+    while true; do
+        read -rp "Bandwidth limit GB (0 = unlimited): " gb
+        [[ "$gb" =~ ^[0-9]+$ ]] && [ "$gb" -le 10000 ] && break
+        echo -e "${R}Enter 0–10000.${NC}"
+    done
+
+    local expiry
+    read -rp "Expiry YYYY-MM-DD (or Enter for 'never'): " expiry
+    [[ "$expiry" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || expiry="never"
+
+    register_account "$username" "$proto" "$gb" "$expiry"
+}
+
+# ---------------------------------------------------------------------------
+# Main menu
+# ---------------------------------------------------------------------------
+main_menu() {
+    _db_init
+    ensure_stats_api
+
+    while true; do
+        clear
+        local tot act dis
+        tot=$(_db_q '.users | length // 0')
+        act=$(jq '[.users[] | select(.enable==true)]  | length' "$DB" 2>/dev/null || echo 0)
+        dis=$(jq '[.users[] | select(.enable==false)] | length' "$DB" 2>/dev/null || echo 0)
+
+        echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BOLD}  XRAY BANDWIDTH QUOTA MANAGER${NC}"
+        echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  Users: ${C}${tot:-0}${NC}  Active: ${G}${act:-0}${NC}  Disabled: ${R}${dis:-0}${NC}"
+        echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  [1]  Dashboard"
+        echo -e "  [2]  Create account with quota"
+        echo -e "  [3]  View usage"
+        echo -e "  [4]  Reset bandwidth"
+        echo -e "  [5]  Set quota limit"
+        echo -e "  [6]  Enable / Disable user"
+        echo -e "  [7]  Enforce quotas now"
+        echo -e "  [0]  Exit"
+        echo -e "${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        read -rp "Option: " o
+        case "$o" in
+            1) dashboard ;;
+            2) wizard_create; read -n1 -s -r -p "Press any key…" ;;
+            3) read -rp "Username: " u; show_usage "$u"
+               read -n1 -s -r -p "Press any key…" ;;
+            4) read -rp "Username: " u; reset_bandwidth "$u"
+               read -n1 -s -r -p "Press any key…" ;;
+            5) read -rp "Username: " u; read -rp "Quota GB: " g
+               set_quota "$u" "$g"; read -n1 -s -r -p "Press any key…" ;;
+            6) read -rp "Username: " u
+               local en; en=$(_db_q ".users[] | select(.username==\"$u\") | .enable")
+               [ "$en" = "true" ] && disable_user "$u" "manual" || enable_user "$u"
+               read -n1 -s -r -p "Press any key…" ;;
+            7) echo "Enforcing…"; enforce_quotas; echo "Done."
+               read -n1 -s -r -p "Press any key…" ;;
+            0) exit 0 ;;
+            *) echo -e "${R}Invalid.${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
+# CLI dispatch
+# ---------------------------------------------------------------------------
+cmd="${1:-menu}"
+shift || true
+case "$cmd" in
+    menu)     main_menu ;;
+    register) _db_init; register_account "$@" ;;
+    reset)    _db_init; reset_bandwidth  "$1" ;;
+    disable)  _db_init; disable_user     "$1" manual ;;
+    enable)   _db_init; enable_user      "$1" ;;
+    usage)    _db_init; show_usage       "$1" ;;
+    quota)    _db_init; set_quota        "$1" "$2" ;;
+    enforce)  _db_init; enforce_quotas ;;
+    dashboard)_db_init; dashboard ;;
+    *)
+        echo "Usage: $(basename "$0") {menu|register|reset|disable|enable|usage|quota|enforce|dashboard}"
+        exit 1 ;;
+esac

@@ -25,6 +25,9 @@ resolve_xray_bin() {
             XRAY_BIN="/usr/bin/xray"
         fi
     fi
+    if [ ! -x "$XRAY_BIN" ]; then
+        echo -e "${YELLOW}Warning: Xray binary not found; bandwidth usage cannot be monitored.${NC}" >&2
+    fi
 }
 
 resolve_xray_bin

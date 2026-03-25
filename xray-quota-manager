@@ -602,8 +602,8 @@ enforce_quotas() {
             fi
         fi
     done
+    local escaped_user
     for user in $users; do
-        local escaped_user
         escaped_user=$(escape_xray_pattern "$user")
         statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1 >/dev/null
         statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1 >/dev/null

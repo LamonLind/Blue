@@ -123,8 +123,11 @@ while true; do
         7)
             if [ -x /usr/bin/menu ]; then
                 /usr/bin/menu
-            else
+            elif command -v menu >/dev/null 2>&1; then
                 menu
+            else
+                echo -e "${red}Main menu command not found.${NC}"
+                exit 1
             fi
             exit 0
             ;;

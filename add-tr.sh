@@ -153,7 +153,7 @@ if command -v xray-quota-manager >/dev/null 2>&1; then
         --arg ws "$trojanlink1" \
         --arg go "$trojanlink2" \
         --arg grpc "$trojanlink4" \
-        '{ws:$ws,go:$go,grpc:$grpc}')
+        '{ws,go,grpc}')
     xray-quota-manager register "$user" "trojan" "$uuid" "$exp" "$quota_gb" "$configs_json" >/dev/null 2>&1
 fi
 clear

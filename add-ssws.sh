@@ -142,7 +142,7 @@ if command -v xray-quota-manager >/dev/null 2>&1; then
         --arg ws_tls "$sslinkws" \
         --arg ws_ntls "$nonsslinkws" \
         --arg grpc "$sslinkgrpc" \
-        '{ws_tls:$ws_tls,ws_ntls:$ws_ntls,grpc:$grpc}')
+        '{ws_tls,ws_ntls,grpc}')
     xray-quota-manager register "$user" "ss" "$uuid" "$exp" "$quota_gb" "$configs_json" >/dev/null 2>&1
 fi
 #buatshadowsocks custom

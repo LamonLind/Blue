@@ -164,7 +164,7 @@ if command -v xray-quota-manager >/dev/null 2>&1; then
         --arg grpc "$vlesslink3" \
         --arg xhttp_tls "$vlesslink4" \
         --arg xhttp_ntls "$vlesslink5" \
-        '{ws_tls:$ws_tls,ws_ntls:$ws_ntls,grpc:$grpc,xhttp_tls:$xhttp_tls,xhttp_ntls:$xhttp_ntls}')
+        '{ws_tls,ws_ntls,grpc,xhttp_tls,xhttp_ntls}')
     xray-quota-manager register "$user" "vless" "$uuid" "$exp" "$quota_gb" "$configs_json" >/dev/null 2>&1
 fi
 systemctl restart xray

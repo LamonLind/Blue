@@ -746,6 +746,8 @@ cat <<EOF> /etc/xray/config.json
   "policy": {
     "levels": {
       "0": {
+        "handshake": 4,
+        "connIdle": 300,
         "statsUserDownlink": true,
         "statsUserUplink": true
       }

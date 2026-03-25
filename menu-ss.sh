@@ -199,9 +199,9 @@ sed -i "/^#ssw $user $exp/,/^},{/d" /etc/xray/config.json
 rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
 rm -f /home/vps/public_html/sodosokws-$user.txt /home/vps/public_html/sodosokgrpc-$user.txt
 systemctl restart xray.service
-    if command -v xray-quota-manager >/dev/null 2>&1; then
-        xray-quota-manager remove-user "$user" >/dev/null 2>&1
-    fi
+if command -v xray-quota-manager >/dev/null 2>&1; then
+    xray-quota-manager remove-user "$user" >/dev/null 2>&1
+fi
 clear
 echo ""
 echo "==============================="

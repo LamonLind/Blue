@@ -95,7 +95,7 @@ validate_limit_gb() {
     if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
         return 1
     fi
-    if [ "$limit" -lt 0 ] || [ "$limit" -gt 10000 ]; then
+    if [ "$limit" -gt 10000 ]; then
         return 1
     fi
     return 0
@@ -146,7 +146,7 @@ get_user_usage() {
         if [ "$remaining" -lt 0 ]; then
             remaining=0
         fi
-        percent=$(echo "scale=0; ($total_used * 100) / $limit" | bc)
+        percent=$((total_used * 100 / limit))
     fi
     echo "${total_used}|${limit}|${remaining}|${percent}"
 }
@@ -259,7 +259,7 @@ extend_limit() {
     local limit_bytes
     limit_bytes=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .bandwidth.limit_bytes' "$DB_PATH")
     if [ "$limit_bytes" -le 0 ]; then
-        echo "User has unlimited bandwidth. Use set-limit to define a quota."
+        echo "User has unlimited bandwidth. Extend applies only to finite quotas; use set-limit to define one."
         return 1
     fi
     local extra_bytes
@@ -554,7 +554,11 @@ usage_bar() {
     local limit="$2"
     local width=20
     if [ "$limit" -le 0 ]; then
-        printf "[%s]" "$(printf '█%.0s' $(seq 1 "$width"))"
+        local bar=""
+        for ((i=0; i<width; i++)); do
+            bar+="█"
+        done
+        printf "[%s]" "$bar"
         return
     fi
     local percent=$((used * 100 / limit))
@@ -563,14 +567,14 @@ usage_bar() {
     fi
     local filled=$((percent * width / 100))
     local empty=$((width - filled))
-    printf "["
-    if [ "$filled" -gt 0 ]; then
-        printf '█%.0s' $(seq 1 "$filled")
-    fi
-    if [ "$empty" -gt 0 ]; then
-        printf '░%.0s' $(seq 1 "$empty")
-    fi
-    printf "]"
+    local bar=""
+    for ((i=0; i<filled; i++)); do
+        bar+="█"
+    done
+    for ((i=0; i<empty; i++)); do
+        bar+="░"
+    done
+    printf "[%s]" "$bar"
 }
 
 show_user() {

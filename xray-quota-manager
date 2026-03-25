@@ -1,392 +1,541 @@
 #!/bin/bash
 # =========================================
-# Xray Bandwidth Quota Management
-# Based on 3x-ui implementation
-# Manages TotalGB limits per client
-# Author: LamonLind
-# (C) Copyright 2024
+# Xray Aggregated Bandwidth Manager
+# Tracks and enforces per-account total usage
+# across WS/GRPC/XHTTP entries.
 # =========================================
 
-# Color definitions
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Configuration
-QUOTA_CONF="/etc/xray/client-quotas.conf"
-XRAY_CONFIG="/etc/xray/config.json"
+DB_FILE="${XRAY_BW_DB_FILE:-/etc/xray/bandwidth-accounts.json}"
+XRAY_CONFIG="${XRAY_CONFIG_FILE:-/etc/xray/config.json}"
+LOG_FILE="${XRAY_BW_LOG_FILE:-/var/log/xray-bandwidth-monitor.log}"
+API_SERVER="${XRAY_API_SERVER:-127.0.0.1:10085}"
+XRAY_BIN="${XRAY_BINARY:-/usr/local/bin/xray}"
 
-# Ensure directory exists
-mkdir -p /etc/xray 2>/dev/null
-
-# Initialize quota config if not exists
-[ ! -f "$QUOTA_CONF" ] && touch "$QUOTA_CONF"
-
-# Convert human size to bytes (like 3x-ui TotalGB conversion)
-# Input: 10GB, 500MB, 1TB
-# Output: bytes
-size_to_bytes() {
-    local size="$1"
-    local number=$(echo "$size" | grep -oP '^\d+(\.\d+)?')
-    local unit=$(echo "$size" | grep -oP '[A-Za-z]+$' | tr '[:lower:]' '[:upper:]')
-    
-    case "$unit" in
-        KB) echo $(awk "BEGIN {print int($number * 1024)}") ;;
-        MB) echo $(awk "BEGIN {print int($number * 1024 * 1024)}") ;;
-        GB) echo $(awk "BEGIN {print int($number * 1024 * 1024 * 1024)}") ;;
-        TB) echo $(awk "BEGIN {print int($number * 1024 * 1024 * 1024 * 1024)}") ;;
-        *) echo "$number" ;;
-    esac
+db_init() {
+    mkdir -p "$(dirname "$DB_FILE")" 2>/dev/null || true
+    [ ! -f "$DB_FILE" ] && echo '{"accounts":[]}' > "$DB_FILE"
+    if [ ! -f "$DB_FILE" ]; then
+        echo -e "${RED}Unable to initialize database file: $DB_FILE${NC}"
+        exit 1
+    fi
 }
 
-# Convert bytes to human readable (like 3x-ui FormatTraffic)
+db_init
+
+require_tools() {
+    for t in jq awk sed date; do
+        command -v "$t" >/dev/null 2>&1 || {
+            echo -e "${RED}Missing dependency: $t${NC}"
+            exit 1
+        }
+    done
+}
+
+require_tools
+
+log_msg() {
+    local msg="$1"
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $msg" >> "$LOG_FILE"
+}
+
 bytes_to_human() {
     local bytes="$1"
-    if [ "$bytes" -ge 1099511627776 ]; then
-        echo "$(awk "BEGIN {printf \"%.2f TB\", $bytes/1099511627776}")"
-    elif [ "$bytes" -ge 1073741824 ]; then
-        echo "$(awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}")"
-    elif [ "$bytes" -ge 1048576 ]; then
-        echo "$(awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}")"
-    elif [ "$bytes" -ge 1024 ]; then
-        echo "$(awk "BEGIN {printf \"%.2f KB\", $bytes/1024}")"
+    if [ "$bytes" -ge 1099511627776 ] 2>/dev/null; then
+        awk "BEGIN {printf \"%.2f TB\", $bytes/1099511627776}"
+    elif [ "$bytes" -ge 1073741824 ] 2>/dev/null; then
+        awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}"
+    elif [ "$bytes" -ge 1048576 ] 2>/dev/null; then
+        awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}"
+    elif [ "$bytes" -ge 1024 ] 2>/dev/null; then
+        awk "BEGIN {printf \"%.2f KB\", $bytes/1024}"
     else
         echo "${bytes} Bytes"
     fi
 }
 
-# Escape regex special characters for xray stats pattern matching
+size_to_bytes() {
+    local size="$1"
+    local number unit
+    number=$(echo "$size" | sed -E 's/^([0-9]+(\.[0-9]+)?).*/\1/')
+    unit=$(echo "$size" | sed -E 's/^[0-9]+(\.[0-9]+)?([a-zA-Z]*)$/\2/' | tr '[:lower:]' '[:upper:]')
+    [ -z "$number" ] && number=0
+    case "$unit" in
+        ""|B) awk "BEGIN {print int($number)}" ;;
+        KB|K) awk "BEGIN {print int($number*1024)}" ;;
+        MB|M) awk "BEGIN {print int($number*1024*1024)}" ;;
+        GB|G) awk "BEGIN {print int($number*1024*1024*1024)}" ;;
+        TB|T) awk "BEGIN {print int($number*1024*1024*1024*1024)}" ;;
+        *)
+            echo -e "${RED}Invalid size unit: $size${NC}" >&2
+            return 1
+            ;;
+    esac
+}
+
 escape_xray_pattern() {
     printf '%s' "$1" | sed 's/[][\\.^$|?*+(){}]/\\&/g'
 }
 
-# Sum all "value" entries from xray statsquery output
 sum_stats_values() {
     grep -oE '"value"[[:space:]]*:[[:space:]]*("[0-9]+"|[0-9]+)' \
         | sed 's/[^0-9]//g' \
         | awk '{sum+=$1} END {print sum+0}'
 }
 
-# Set quota for a user (like 3x-ui Client.TotalGB)
-# Usage: set_quota <email> <quota_size>
-set_quota() {
-    local email="$1"
-    local quota_size="$2"
-    
-    # Convert to bytes
-    local quota_bytes=$(size_to_bytes "$quota_size")
-    
-    # Remove old entry (use mktemp for security)
-    local tmpfile=$(mktemp)
-    grep -v "^$email|" "$QUOTA_CONF" > "$tmpfile" 2>/dev/null
-    mv "$tmpfile" "$QUOTA_CONF"
-    
-    # Add new entry: email|total_bytes|enabled
-    echo "$email|$quota_bytes|true" >> "$QUOTA_CONF"
-    
-    echo -e "${GREEN}✓ Quota set for $email: $(bytes_to_human $quota_bytes)${NC}"
+db_write() {
+    local tmpfile
+    tmpfile=$(mktemp)
+    if jq "$@" "$DB_FILE" > "$tmpfile" && mv "$tmpfile" "$DB_FILE"; then
+        return 0
+    fi
+    rm -f "$tmpfile"
+    echo -e "${RED}Failed to update database${NC}" >&2
+    return 1
 }
 
-# Remove quota for a user
-remove_quota() {
-    local email="$1"
-    local tmpfile=$(mktemp)
-    
-    grep -v "^$email|" "$QUOTA_CONF" > "$tmpfile" 2>/dev/null
-    mv "$tmpfile" "$QUOTA_CONF"
-    
-    echo -e "${GREEN}✓ Quota removed for $email${NC}"
+db_has_uuid() {
+    local uuid="$1"
+    jq -e --arg uuid "$uuid" '.accounts[] | select(.uuid==$uuid)' "$DB_FILE" >/dev/null 2>&1
 }
 
-# Get quota for a user (returns bytes, 0 if unlimited)
-get_quota() {
-    local email="$1"
-    local quota=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f2)
-    echo "${quota:-0}"
+db_has_username() {
+    local username="$1"
+    jq -e --arg username "$username" '.accounts[] | select(.username==$username)' "$DB_FILE" >/dev/null 2>&1
 }
 
-# Check if user has quota
-has_quota() {
-    local email="$1"
-    grep -q "^$email|" "$QUOTA_CONF" 2>/dev/null
+find_uuid_by_username() {
+    local username="$1"
+    jq -r --arg username "$username" '.accounts[] | select(.username==$username) | .uuid' "$DB_FILE" | head -n1
 }
 
-# Get separate uplink and downlink traffic
-get_user_traffic_detailed() {
-    local email="$1"
+add_account_record() {
+    local username="$1"
+    local uuid="$2"
+    local created_at="$3"
+    local expiry_date="$4"
+    local bandwidth_limit_bytes="$5"
+    local status="$6"
+    local last_reset="$7"
+
+    db_write --arg username "$username" \
+             --arg uuid "$uuid" \
+             --arg created_at "$created_at" \
+             --arg expiry_date "$expiry_date" \
+             --argjson bandwidth_limit_bytes "$bandwidth_limit_bytes" \
+             --arg status "$status" \
+             --arg last_reset "$last_reset" \
+             '.accounts += [{
+                username:$username,
+                uuid:$uuid,
+                creation_date:$created_at,
+                expiry_date:$expiry_date,
+                bandwidth_limit_bytes:$bandwidth_limit_bytes,
+                total_usage_bytes:0,
+                status:$status,
+                last_reset:$last_reset
+             }]'
+}
+
+update_account_usage() {
+    local uuid="$1"
+    local usage="$2"
+    db_write --arg uuid "$uuid" --argjson usage "$usage" \
+      '(.accounts[] | select(.uuid==$uuid) | .total_usage_bytes) = $usage'
+}
+
+update_account_status() {
+    local uuid="$1"
+    local status="$2"
+    db_write --arg uuid "$uuid" --arg status "$status" \
+      '(.accounts[] | select(.uuid==$uuid) | .status) = $status'
+}
+
+update_account_limit() {
+    local uuid="$1"
+    local limit="$2"
+    db_write --arg uuid "$uuid" --argjson limit "$limit" \
+      '(.accounts[] | select(.uuid==$uuid) | .bandwidth_limit_bytes) = $limit'
+}
+
+update_account_expiry() {
+    local uuid="$1"
+    local expiry="$2"
+    db_write --arg uuid "$uuid" --arg expiry "$expiry" \
+      '(.accounts[] | select(.uuid==$uuid) | .expiry_date) = $expiry'
+}
+
+reset_account_counter() {
+    local uuid="$1"
+    local ts="$2"
+    db_write --arg uuid "$uuid" --arg ts "$ts" \
+      '(.accounts[] | select(.uuid==$uuid) | .total_usage_bytes) = 0
+      | (.accounts[] | select(.uuid==$uuid) | .last_reset) = $ts
+      | (.accounts[] | select(.uuid==$uuid) | .status) = "active"'
+}
+
+remove_account_record() {
+    local uuid="$1"
+    db_write --arg uuid "$uuid" '.accounts |= map(select(.uuid != $uuid))'
+}
+
+remove_account_only() {
+    local key="$1"
+    local rec uuid
+    rec=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$rec" ] && return 1
+    uuid=$(echo "$rec" | base64 -d | jq -r '.uuid')
+    remove_account_record "$uuid"
+}
+
+get_user_traffic_by_id() {
+    local id="$1"
     local uplink=0
     local downlink=0
-    local _Xray="/usr/local/bin/xray"
-    
-    # Check if xray exists and is executable
-    if [ -x "$_Xray" ]; then
-        # Escape regex special characters in email (xray -pattern uses Go regexp)
-        local escaped_email
-        escaped_email=$(escape_xray_pattern "$email")
-        
-        # Get uplink (upload) - handle both "value":"123" and "value": 123 formats
-        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "^user>>>$escaped_email>>>traffic>>>uplink$" 2>/dev/null | sum_stats_values)
-        [ -z "$uplink" ] && uplink=0
-        
-        # Get downlink (download) - handle both "value":"123" and "value": 123 formats
-        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "^user>>>$escaped_email>>>traffic>>>downlink$" 2>/dev/null | sum_stats_values)
-        [ -z "$downlink" ] && downlink=0
-    fi
-    
-    # Return uplink and downlink as space-separated values
-    echo "$uplink $downlink"
+
+    [ ! -x "$XRAY_BIN" ] && { echo 0; return; }
+
+    local escaped_id
+    escaped_id=$(escape_xray_pattern "$id")
+
+    uplink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>uplink$" 2>/dev/null | sum_stats_values)
+    [ -z "$uplink" ] && uplink=0
+    downlink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>downlink$" 2>/dev/null | sum_stats_values)
+    [ -z "$downlink" ] && downlink=0
+
+    echo $((uplink + downlink))
 }
 
-# Get user traffic from xray stats API
-# Formula: uplink + downlink
-get_user_traffic() {
-    local email="$1"
-    
-    # Get detailed traffic and sum them
-    local traffic_details=$(get_user_traffic_detailed "$email")
-    local uplink=${traffic_details%% *}
-    local downlink=${traffic_details##* }
-    
-    # Return total: uplink + downlink
-    echo $(( uplink + downlink ))
-}
+aggregated_usage_for_account() {
+    local username="$1"
+    local uuid="$2"
 
-# Reset user bandwidth usage statistics
-# This resets the xray stats for both uplink and downlink
-reset_user_stats() {
-    local email="$1"
-    local _Xray="/usr/local/bin/xray"
-    
-    # Check if xray exists and is executable
-    if [ ! -x "$_Xray" ]; then
-        echo -e "${RED}✗ Xray binary not found or not executable${NC}"
-        return 1
-    fi
-    
-    # Reset uplink stats
-    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null; then
-        echo -e "${YELLOW}⚠ Warning: Failed to reset uplink statistics${NC}"
-    fi
-    
-    # Reset downlink stats
-    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null; then
-        echo -e "${YELLOW}⚠ Warning: Failed to reset downlink statistics${NC}"
-    fi
-    
-    echo -e "${GREEN}✓ Statistics reset for $email${NC}"
-}
+    local usage_uuid=0 usage_user=0
+    usage_uuid=$(get_user_traffic_by_id "$uuid")
+    usage_user=$(get_user_traffic_by_id "$username")
 
-# Reset user quota and enable them
-# This function:
-# 1. Resets bandwidth usage statistics via Xray API
-# 2. Re-enables user in quota config (if disabled)
-# 3. Restarts Xray service to apply changes
-reset_user_quota() {
-    local email="$1"
-    
-    # Check if user has a quota entry
-    if ! has_quota "$email"; then
-        echo -e "${YELLOW}⚠ User $email does not have a quota configured${NC}"
-        echo -e "${YELLOW}  You can set a quota with: $0 set $email <quota>${NC}"
-        return 1
-    fi
-    
-    # Get current quota info
-    local quota=$(get_quota "$email")
-    local quota_status=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f3)
-    
-    echo -e "${BLUE}=== Resetting User Quota ===${NC}"
-    echo -e "User: ${YELLOW}$email${NC}"
-    echo -e "Quota Limit: ${YELLOW}$(bytes_to_human $quota)${NC}"
-    echo -e "Current Status: ${YELLOW}$quota_status${NC}"
-    echo ""
-    
-    # Step 1: Reset statistics
-    echo -e "${INFO} Resetting bandwidth statistics..."
-    reset_user_stats "$email"
-    
-    # Step 2: Re-enable in quota config if disabled
-    if [ "$quota_status" != "true" ]; then
-        echo -e "${INFO} Re-enabling user in quota config..."
-        # Use mktemp for safer file manipulation
-        local tmpfile=$(mktemp)
-        awk -v email="$email" -F'|' '
-            $1 == email { $3 = "true" }
-            { print $1 FS $2 FS $3 }
-        ' "$QUOTA_CONF" > "$tmpfile" && mv "$tmpfile" "$QUOTA_CONF"
-        echo -e "${GREEN}✓ User re-enabled in quota config${NC}"
+    # Aggregated across protocols without duplication:
+    # all protocol entries for same account key share same stat bucket.
+    # Prefer UUID bucket, fallback to username bucket for older configs.
+    if [ "$usage_uuid" -gt 0 ] 2>/dev/null; then
+        echo "$usage_uuid"
     else
-        echo -e "${GREEN}✓ User already enabled in quota config${NC}"
+        echo "$usage_user"
     fi
-    
-    # Step 3: Restart Xray service
-    echo -e "${INFO} Restarting Xray service to apply changes..."
-    if systemctl restart xray 2>/dev/null; then
-        echo -e "${GREEN}✓ Xray service restarted successfully${NC}"
-    else
-        echo -e "${RED}✗ Failed to restart Xray service${NC}"
-        echo -e "${YELLOW}  Please restart manually: systemctl restart xray${NC}"
-        return 1
-    fi
-    
-    echo ""
-    echo -e "${GREEN}=== Quota Reset Complete ===${NC}"
-    echo -e "${GREEN}✓ User $email has been reset and re-enabled${NC}"
-    echo -e "${GREEN}✓ Bandwidth usage statistics cleared${NC}"
-    echo -e "${GREEN}✓ Quota limit maintained: $(bytes_to_human $quota)${NC}"
-    echo ""
 }
 
-# Show usage for a specific user
+remove_user_from_xray_config() {
+    local username="$1"
+    [ ! -f "$XRAY_CONFIG" ] && return 1
+
+    cp "$XRAY_CONFIG" "/etc/xray/config.json.backup.$(date +%s)" 2>/dev/null
+    sed -i "/#vls $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+    sed -i "/#vlsg $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+    sed -i "/#vlsx $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+    sed -i "/#vms $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+    sed -i "/#vmsg $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+    sed -i "/#vmsx $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+    sed -i "/### $username /,/},/d" "$XRAY_CONFIG" 2>/dev/null
+
+    systemctl restart xray 2>/dev/null
+}
+
+clear_user_stats() {
+    local id="$1"
+    [ ! -x "$XRAY_BIN" ] && return 0
+    "$XRAY_BIN" api statsclear --server="$API_SERVER" -pattern "user>>>$id>>>traffic>>>uplink" >/dev/null 2>&1 || true
+    "$XRAY_BIN" api statsclear --server="$API_SERVER" -pattern "user>>>$id>>>traffic>>>downlink" >/dev/null 2>&1 || true
+}
+
+ensure_xray_stats_enabled() {
+    [ ! -f "$XRAY_CONFIG" ] && return 0
+    if ! jq -e '.policy.levels["0"].statsUserUplink == true and .policy.levels["0"].statsUserDownlink == true' "$XRAY_CONFIG" >/dev/null 2>&1; then
+        local tmpfile
+        tmpfile=$(mktemp)
+        jq '
+          .policy.levels["0"].statsUserUplink = true
+          | .policy.levels["0"].statsUserDownlink = true
+          | .policy.levels["0"].handshake = (.policy.levels["0"].handshake // 4)
+          | .policy.levels["0"].connIdle = (.policy.levels["0"].connIdle // 300)
+          | .policy.system.statsInboundUplink = true
+          | .policy.system.statsInboundDownlink = true
+          | .stats = (.stats // {})
+          | .api.tag = (.api.tag // "api")
+          | .api.services = ((.api.services // []) + ["StatsService"] | unique)
+        ' "$XRAY_CONFIG" > "$tmpfile" && mv "$tmpfile" "$XRAY_CONFIG"
+        systemctl restart xray 2>/dev/null
+    fi
+}
+
+create_account() {
+    local username="$2"
+    local limit_input="$3"
+    local expiry_input="$4"
+    local uuid="$5"
+    local created_at now_iso expiry_date limit_bytes
+
+    if [ -z "$username" ]; then
+        username="user$(date +%s)"
+    fi
+
+    if [ -z "$uuid" ]; then
+        uuid=$(cat /proc/sys/kernel/random/uuid)
+    fi
+
+    if db_has_uuid "$uuid"; then
+        echo -e "${RED}UUID already exists: $uuid${NC}"
+        exit 1
+    fi
+    if db_has_username "$username"; then
+        echo -e "${RED}Username already exists: $username${NC}"
+        exit 1
+    fi
+
+    if [ -z "$limit_input" ]; then
+        echo -e "${RED}Bandwidth limit is required${NC}"
+        exit 1
+    fi
+    limit_bytes=$(size_to_bytes "$limit_input") || exit 1
+
+    now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    created_at="$now_iso"
+    if echo "$expiry_input" | grep -qE '^[0-9]+$'; then
+        expiry_date=$(date -u -d "$expiry_input days" +"%Y-%m-%d")
+    elif [ -n "$expiry_input" ]; then
+        expiry_date="$expiry_input"
+    else
+        expiry_date=$(date -u -d "30 days" +"%Y-%m-%d")
+    fi
+
+    add_account_record "$username" "$uuid" "$created_at" "$expiry_date" "$limit_bytes" "active" "$now_iso"
+    ensure_xray_stats_enabled
+
+    echo -e "${GREEN}✓ Account record created${NC}"
+    echo "username: $username"
+    echo "uuid: $uuid"
+    echo "expiry: $expiry_date"
+    echo "bandwidth_limit: $(bytes_to_human "$limit_bytes")"
+}
+
+list_accounts() {
+    printf "%-18s %-36s %-12s %-12s %-12s %-10s\n" "USERNAME" "UUID" "LIMIT" "USAGE" "REMAINING" "STATUS"
+    jq -r '.accounts[] | [.username,.uuid,.bandwidth_limit_bytes,.total_usage_bytes,.status] | @tsv' "$DB_FILE" | while IFS=$'\t' read -r username uuid limit usage status; do
+        [ -z "$username" ] && continue
+        local current_usage
+        current_usage=$(aggregated_usage_for_account "$username" "$uuid")
+        update_account_usage "$uuid" "$current_usage"
+        local remaining=0
+        if [ "$limit" -gt "$current_usage" ] 2>/dev/null; then
+            remaining=$((limit-current_usage))
+        fi
+        printf "%-18s %-36s %-12s %-12s %-12s %-10s\n" \
+          "$username" "$uuid" "$(bytes_to_human "$limit")" "$(bytes_to_human "$current_usage")" "$(bytes_to_human "$remaining")" "$status"
+    done
+}
+
 show_usage() {
-    local email="$1"
-    
-    # Get quota
-    local quota=$(get_quota "$email")
-    local quota_status=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f3)
-    
-    # Get current usage (total)
-    local current_usage=$(get_user_traffic "$email")
-    
-    # Get detailed traffic (upload and download separately)
-    local traffic_details=$(get_user_traffic_detailed "$email")
-    local upload_usage=$(echo $traffic_details | cut -d' ' -f1)
-    local download_usage=$(echo $traffic_details | cut -d' ' -f2)
-    
-    echo -e "${BLUE}=== Bandwidth Usage for $email ===${NC}"
-    echo ""
-    
-    if [ "$quota" -eq 0 ]; then
-        echo -e "Quota Limit    : ${GREEN}Unlimited${NC}"
-        echo -e "Upload Used    : $(bytes_to_human $upload_usage)"
-        echo -e "Download Used  : $(bytes_to_human $download_usage)"
-        echo -e "Total Usage    : $(bytes_to_human $current_usage)"
-        echo -e "Status         : ${GREEN}Active${NC}"
-    else
-        local usage_percent=0
-        if [ "$quota" -gt 0 ]; then
-            usage_percent=$(awk "BEGIN {printf \"%.1f\", ($current_usage * 100.0) / $quota}")
-        fi
-        
-        echo -e "Quota Limit    : $(bytes_to_human $quota)"
-        echo -e "Upload Used    : $(bytes_to_human $upload_usage)"
-        echo -e "Download Used  : $(bytes_to_human $download_usage)"
-        echo -e "Total Usage    : $(bytes_to_human $current_usage)"
-        echo -e "Usage Percent  : ${usage_percent}%"
-        
-        if [ "$quota_status" = "true" ]; then
-            if [ "$current_usage" -ge "$quota" ]; then
-                echo -e "Status         : ${RED}Quota Exceeded (will be disabled)${NC}"
-            else
-                local remaining=$((quota - current_usage))
-                echo -e "Remaining      : $(bytes_to_human $remaining)"
-                echo -e "Status         : ${GREEN}Active${NC}"
-            fi
-        else
-            echo -e "Status         : ${RED}Disabled (quota exceeded)${NC}"
-        fi
-    fi
-    echo ""
+    local key="$2"
+    [ -z "$key" ] && { echo -e "${RED}Usage: $0 usage <username|uuid>${NC}"; exit 1; }
+    local record
+    record=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$record" ] && { echo -e "${RED}Account not found: $key${NC}"; exit 1; }
+    _jq() { echo "$record" | base64 -d | jq -r "$1"; }
+    local username uuid limit usage status expiry
+    username=$(_jq '.username')
+    uuid=$(_jq '.uuid')
+    limit=$(_jq '.bandwidth_limit_bytes')
+    status=$(_jq '.status')
+    expiry=$(_jq '.expiry_date')
+    usage=$(aggregated_usage_for_account "$username" "$uuid")
+    update_account_usage "$uuid" "$usage"
+    echo -e "${BLUE}Account:${NC} $username"
+    echo "UUID: $uuid"
+    echo "Expiry: $expiry"
+    echo "Limit: $(bytes_to_human "$limit")"
+    echo "Usage: $(bytes_to_human "$usage")"
+    echo "Status: $status"
 }
 
-# List all quotas (like 3x-ui client list)
-list_quotas() {
-    echo -e "${BLUE}=== Client Bandwidth Quotas ===${NC}\n"
-    
-    if [ ! -s "$QUOTA_CONF" ]; then
-        echo -e "${YELLOW}No quotas configured${NC}"
+reset_account() {
+    local key="$2"
+    [ -z "$key" ] && { echo -e "${RED}Usage: $0 reset <username|uuid>${NC}"; exit 1; }
+    local rec username uuid now_iso
+    rec=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$rec" ] && { echo -e "${RED}Account not found: $key${NC}"; exit 1; }
+    username=$(echo "$rec" | base64 -d | jq -r '.username')
+    uuid=$(echo "$rec" | base64 -d | jq -r '.uuid')
+    clear_user_stats "$uuid"
+    clear_user_stats "$username"
+    now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    reset_account_counter "$uuid" "$now_iso"
+    echo -e "${GREEN}✓ Counter reset for $username${NC}"
+}
+
+delete_account() {
+    local key="$2"
+    [ -z "$key" ] && { echo -e "${RED}Usage: $0 delete <username|uuid>${NC}"; exit 1; }
+    local rec username uuid
+    rec=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$rec" ] && { echo -e "${RED}Account not found: $key${NC}"; exit 1; }
+    username=$(echo "$rec" | base64 -d | jq -r '.username')
+    uuid=$(echo "$rec" | base64 -d | jq -r '.uuid')
+    remove_user_from_xray_config "$username"
+    remove_account_record "$uuid"
+    echo -e "${GREEN}✓ Account deleted: $username${NC}"
+}
+
+extend_expiry() {
+    local key="$2"
+    local days="$3"
+    [ -z "$key" ] || [ -z "$days" ] && { echo -e "${RED}Usage: $0 extend <username|uuid> <days>${NC}"; exit 1; }
+    local rec uuid old_exp new_exp
+    rec=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$rec" ] && { echo -e "${RED}Account not found: $key${NC}"; exit 1; }
+    uuid=$(echo "$rec" | base64 -d | jq -r '.uuid')
+    old_exp=$(echo "$rec" | base64 -d | jq -r '.expiry_date')
+    if echo "$old_exp" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+        new_exp=$(date -u -d "$old_exp +$days days" +"%Y-%m-%d")
+    else
+        new_exp=$(date -u -d "+$days days" +"%Y-%m-%d")
+    fi
+    update_account_expiry "$uuid" "$new_exp"
+    echo -e "${GREEN}✓ Expiry updated: $new_exp${NC}"
+}
+
+set_limit() {
+    local key="$2"
+    local limit_input="$3"
+    [ -z "$key" ] || [ -z "$limit_input" ] && { echo -e "${RED}Usage: $0 set-limit <username|uuid> <size>${NC}"; exit 1; }
+    local rec uuid limit
+    rec=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$rec" ] && { echo -e "${RED}Account not found: $key${NC}"; exit 1; }
+    uuid=$(echo "$rec" | base64 -d | jq -r '.uuid')
+    limit=$(size_to_bytes "$limit_input") || exit 1
+    update_account_limit "$uuid" "$limit"
+    echo -e "${GREEN}✓ Limit updated: $(bytes_to_human "$limit")${NC}"
+}
+
+legacy_set() {
+    local username="$2"
+    local limit_input="$3"
+    [ -z "$username" ] || [ -z "$limit_input" ] && { echo -e "${RED}Usage: $0 set <username> <limit>${NC}"; exit 1; }
+    local existing_uuid
+    existing_uuid=$(find_uuid_by_username "$username")
+    if [ -n "$existing_uuid" ]; then
+        set_limit set-limit "$username" "$limit_input"
         return
     fi
-    
-    printf "%-25s %-15s %-15s %-10s %-10s\n" "Email" "Quota" "Usage" "Percent" "Status"
-    printf "%-25s %-15s %-15s %-10s %-10s\n" "-----" "-----" "-----" "-------" "------"
-    
-    while IFS='|' read -r email total_bytes enabled; do
-        [ -z "$email" ] && continue
-        
-        local total_human=$(bytes_to_human $total_bytes)
-        local current_usage=$(get_user_traffic "$email")
-        local usage_human=$(bytes_to_human $current_usage)
-        
-        local usage_percent="N/A"
-        if [ "$total_bytes" -gt 0 ]; then
-            usage_percent=$(awk "BEGIN {printf \"%.1f%%\", ($current_usage * 100.0) / $total_bytes}")
-        fi
-        
-        printf "%-25s %-15s %-15s %-10s %-10s\n" "$email" "$total_human" "$usage_human" "$usage_percent" "$enabled"
-    done < "$QUOTA_CONF"
+    create_account create "$username" "$limit_input" "30" ""
 }
 
-# Main command handler
+legacy_get() {
+    local key="$2"
+    [ -z "$key" ] && { echo -e "${RED}Usage: $0 get <username|uuid>${NC}"; exit 1; }
+    local rec
+    rec=$(jq -r --arg key "$key" '.accounts[] | select(.username==$key or .uuid==$key) | @base64' "$DB_FILE" | head -n1)
+    [ -z "$rec" ] && { echo "0"; return; }
+    echo "$rec" | base64 -d | jq -r '.bandwidth_limit_bytes'
+}
+
+legacy_remove() {
+    local key="$2"
+    [ -z "$key" ] && { echo -e "${RED}Usage: $0 remove <username|uuid>${NC}"; exit 1; }
+    if remove_account_only "$key"; then
+        echo -e "${GREEN}✓ Account record removed: $key${NC}"
+    else
+        echo -e "${YELLOW}Account not found: $key${NC}"
+    fi
+}
+
+enforce_once() {
+    jq -r '.accounts[] | [.username,.uuid,.bandwidth_limit_bytes,.status] | @tsv' "$DB_FILE" | while IFS=$'\t' read -r username uuid limit status; do
+        [ -z "$username" ] && continue
+        [ "$status" = "disabled" ] && continue
+        [ "$limit" -le 0 ] 2>/dev/null && continue
+        local usage
+        usage=$(aggregated_usage_for_account "$username" "$uuid")
+        update_account_usage "$uuid" "$usage"
+        if [ "$usage" -ge "$limit" ] 2>/dev/null; then
+            remove_user_from_xray_config "$username"
+            update_account_status "$uuid" "disabled"
+            log_msg "DISABLED username=$username uuid=$uuid usage=$usage limit=$limit"
+        fi
+    done
+}
+
+create_interactive() {
+    local username quota exp uuid
+    read -rp "Username (blank=auto): " username
+    read -rp "Bandwidth limit (e.g., 100GB): " quota
+    read -rp "Expiry (days or YYYY-MM-DD, blank=30d): " exp
+    read -rp "UUID (blank=auto): " uuid
+    create_account create "$username" "$quota" "$exp" "$uuid"
+}
+
+menu() {
+    clear
+    echo "=============================================="
+    echo " Aggregated Bandwidth Traffic Management"
+    echo "=============================================="
+    echo "1) Create account"
+    echo "2) List accounts"
+    echo "3) Show usage"
+    echo "4) Reset counter"
+    echo "5) Delete account"
+    echo "6) Extend expiry"
+    echo "7) Modify bandwidth limit"
+    echo "8) Run enforcement now"
+    echo "x) Exit"
+    echo "=============================================="
+    read -rp "Select: " opt
+    case "$opt" in
+        1) create_interactive ;;
+        2) list_accounts ;;
+        3) read -rp "Username/UUID: " k; show_usage usage "$k" ;;
+        4) read -rp "Username/UUID: " k; reset_account reset "$k" ;;
+        5) read -rp "Username/UUID: " k; delete_account delete "$k" ;;
+        6) read -rp "Username/UUID: " k; read -rp "Days: " d; extend_expiry extend "$k" "$d" ;;
+        7) read -rp "Username/UUID: " k; read -rp "New limit: " l; set_limit set-limit "$k" "$l" ;;
+        8) enforce_once ;;
+        x|X) exit 0 ;;
+        *) echo "Invalid option" ;;
+    esac
+}
+
 case "$1" in
-    set)
-        if [ -z "$2" ] || [ -z "$3" ]; then
-            echo -e "${RED}Usage: $0 set <email> <quota>${NC}"
-            echo -e "Example: $0 set user@example.com 10GB"
-            exit 1
-        fi
-        set_quota "$2" "$3"
-        ;;
-    
-    remove)
-        if [ -z "$2" ]; then
-            echo -e "${RED}Usage: $0 remove <email>${NC}"
-            exit 1
-        fi
-        remove_quota "$2"
-        ;;
-    
-    get)
-        if [ -z "$2" ]; then
-            echo -e "${RED}Usage: $0 get <email>${NC}"
-            exit 1
-        fi
-        quota=$(get_quota "$2")
-        if [ "$quota" -eq 0 ]; then
-            echo -e "${YELLOW}No quota set (unlimited)${NC}"
-        else
-            echo -e "Quota: $(bytes_to_human $quota)"
-        fi
-        ;;
-    
-    list)
-        list_quotas
-        ;;
-    
-    usage)
-        if [ -z "$2" ]; then
-            echo -e "${RED}Usage: $0 usage <email>${NC}"
-            exit 1
-        fi
-        show_usage "$2"
-        ;;
-    
-    reset)
-        if [ -z "$2" ]; then
-            echo -e "${RED}Usage: $0 reset <email>${NC}"
-            echo -e "Example: $0 reset user@example.com"
-            exit 1
-        fi
-        reset_user_quota "$2"
-        ;;
-    
+    create) create_account "$@" ;;
+    list) list_accounts ;;
+    usage) show_usage "$@" ;;
+    reset) reset_account "$@" ;;
+    delete) delete_account "$@" ;;
+    extend) extend_expiry "$@" ;;
+    set-limit) set_limit "$@" ;;
+    set) legacy_set "$@" ;;
+    get) legacy_get "$@" ;;
+    remove) legacy_remove "$@" ;;
+    enforce) enforce_once ;;
+    menu) menu ;;
     *)
-        echo -e "${BLUE}Xray Quota Manager (3x-ui style)${NC}"
-        echo -e "\nUsage: $0 <command> [options]"
-        echo -e "\nCommands:"
-        echo -e "  set <email> <quota>   - Set quota (e.g., 10GB, 500MB, 1TB)"
-        echo -e "  remove <email>        - Remove quota"
-        echo -e "  get <email>           - Get quota for user"
-        echo -e "  usage <email>         - Show current bandwidth usage"
-        echo -e "  list                  - List all quotas with usage"
-        echo -e "  reset <email>         - Reset quota usage and re-enable user"
-        echo -e "\nExamples:"
-        echo -e "  $0 set user@test.com 10GB"
-        echo -e "  $0 usage user@test.com"
-        echo -e "  $0 reset user@test.com"
-        echo -e "  $0 list"
-        exit 1
+        echo "Xray Aggregated Bandwidth Manager"
+        echo ""
+        echo "Usage: $0 <command> [options]"
+        echo "  create <username> <limit> <expiry_days|YYYY-MM-DD> [uuid]"
+        echo "  list"
+        echo "  usage <username|uuid>"
+        echo "  reset <username|uuid>"
+        echo "  delete <username|uuid>"
+        echo "  extend <username|uuid> <days>"
+        echo "  set-limit <username|uuid> <limit>"
+        echo "  set <username> <limit>         (legacy)"
+        echo "  get <username|uuid>            (legacy)"
+        echo "  remove <username|uuid>         (legacy remove record only)"
+        echo "  enforce"
+        echo "  menu"
         ;;
 esac

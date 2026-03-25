@@ -51,16 +51,12 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
 
 ## ✨ New Features
 
-### 🎯 Bandwidth Quota System (3x-ui Style)
-- **Per-user data quotas** for VLESS, VMESS, Trojan, and Shadowsocks
-- Automatic quota enforcement when limit exceeded
-- Easy quota management via command-line tools
-- Supports GB, MB, TB units
-- Real-time traffic monitoring
-- **NEW: User quota reset** - Reset bandwidth usage and re-enable users
-- **NEW: Automatic Xray restart** after quota reset
-- See [BANDWIDTH_QUOTA_GUIDE.md](BANDWIDTH_QUOTA_GUIDE.md) for details
-- See [USER_QUOTA_RESET_GUIDE.md](USER_QUOTA_RESET_GUIDE.md) for reset feature
+### 🎯 Aggregated Bandwidth Traffic Limiting
+- **Per-account total bandwidth limits** for VLESS/VMESS across WS, GRPC, and XHTTP
+- Single aggregated usage counter per account (uplink + downlink, no protocol duplication)
+- Automatic account disable when total limit is exceeded
+- JSON-based account database with limit, usage, expiry, status, and reset timestamp
+- 1-minute monitor cycle for near real-time enforcement
 
 ### 📡 Host Capture System
 - Captures all incoming hosts/domains from VPN connections

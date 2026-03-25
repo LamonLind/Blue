@@ -671,7 +671,7 @@ config_user_records() {
     if [ ! -f "$CONFIG_PATH" ]; then
         return
     fi
-    awk '
+    if ! awk '
         /^#vls / {user=$2; exp=$3; proto="vless"; next}
         /^#vms / {user=$2; exp=$3; proto="vmess"; next}
         /^#tr / {user=$2; exp=$3; proto="trojan"; next}
@@ -698,7 +698,10 @@ config_user_records() {
                 user=""; exp=""; proto=""
             }
         }
-    ' "$CONFIG_PATH"
+    ' "$CONFIG_PATH"; then
+        log_msg "WARN" "Failed to parse ${CONFIG_PATH} for quota sync."
+        return 1
+    fi
 }
 
 sync_missing_users() {
@@ -719,7 +722,7 @@ sync_missing_users() {
         echo '{"users":[]}' > "$tmp_db"
     fi
     if ! jq -e '.users | type == "array"' "$tmp_db" >/dev/null 2>&1; then
-        log_msg "WARN" "Quota DB users list invalid; proceeding with sync using empty database as base."
+        log_msg "WARN" "Quota DB users list invalid; Proceeding with sync using empty database as base."
         echo '{"users":[]}' > "$tmp_db"
     fi
     local -A existing_users

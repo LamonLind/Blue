@@ -224,7 +224,6 @@ case $opt in
 12) clear ; genssl ;;
 13) clear ; nano /etc/issue.net ;;
 14) clear ; running ;;
-15) clear ; cek-trafik ;;
 16) clear ; cek-speed ;;
 #18) clear ; cek-ram ;;
 18) clear ; limit-speed ;;

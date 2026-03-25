@@ -185,7 +185,6 @@ wget -q -O /usr/bin/restart "https://raw.githubusercontent.com/LamonLind/Blue/ma
 wget -q -O /usr/bin/tendang "https://raw.githubusercontent.com/LamonLind/Blue/main/tendang.sh"
 wget -q -O /usr/bin/clearlog "https://raw.githubusercontent.com/LamonLind/Blue/main/clearlog.sh"
 wget -q -O /usr/bin/running "https://raw.githubusercontent.com/LamonLind/Blue/main/running.sh"
-wget -q -O /usr/bin/cek-trafik "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-trafik.sh"
 wget -q -O /usr/bin/cek-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/speedtes_cli.py"
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
@@ -198,7 +197,6 @@ wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
 wget -q -O /usr/bin/menu-slowdns "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-slowdns.sh"
 wget -q -O /usr/bin/menu-captured-hosts "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-captured-hosts.sh"
-wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
 wget -q -O /usr/bin/menu-wildcard "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-wildcard.sh"
 wget -q -O /usr/bin/capture-host "https://raw.githubusercontent.com/LamonLind/Blue/main/capture-host.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
@@ -214,9 +212,6 @@ wget -q -O /usr/bin/uninstall "https://raw.githubusercontent.com/LamonLind/Blue/
 wget -q -O /usr/bin/dns "https://raw.githubusercontent.com/LamonLind/Blue/main/dns.sh"
 wget -q -O /usr/bin/netf "https://raw.githubusercontent.com/LamonLind/Blue/main/netf.sh"
 wget -q -O /usr/bin/bbr "https://raw.githubusercontent.com/LamonLind/Blue/main/bbr.sh"
-# Quota system scripts (3x-ui style bandwidth limits)
-wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
-wget -q -O /usr/bin/xray-traffic-monitor "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-traffic-monitor"
 #wget -q -O /usr/bin/del-xrays "https://raw.githubusercontent.com/LamonLind/Blue/main/del-xrays.sh"
 #wget -q -O /usr/bin/user-xrays "https://raw.githubusercontent.com/LamonLind/Blue/main/user-xrays.sh"
 chmod +x /usr/bin/add-ws
@@ -231,7 +226,6 @@ chmod +x /usr/bin/restart
 chmod +x /usr/bin/tendang
 chmod +x /usr/bin/clearlog
 chmod +x /usr/bin/running
-chmod +x /usr/bin/cek-trafik
 chmod +x /usr/bin/cek-speed
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
@@ -243,8 +237,6 @@ chmod +x /usr/bin/menu-trojan
 chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
 chmod +x /usr/bin/menu-slowdns
-chmod +x /usr/bin/menu-captured-hosts
-chmod +x /usr/bin/menu-bandwidth
 chmod +x /usr/bin/menu-wildcard
 chmod +x /usr/bin/capture-host
 chmod +x /usr/bin/menu-bckp
@@ -257,8 +249,6 @@ chmod +x /usr/bin/uninstall
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr
-chmod +x /usr/bin/xray-quota-manager
-chmod +x /usr/bin/xray-traffic-monitor
 #chmod +x /usr/bin/del-xrays
 #chmod +x /usr/bin/user-xrays
 
@@ -318,30 +308,6 @@ chmod 755 /etc/myvpn/usage
 chmod 755 /etc/myvpn/blocked_users
 
 
-
-# Create systemd service for xray quota monitor (3x-ui style)
-cat > /etc/systemd/system/xray-quota-monitor.service <<-END
-[Unit]
-Description=Xray Traffic Monitor & Quota Enforcer (3x-ui style)
-Documentation=https://github.com/LamonLind/Blue
-After=network.target xray.service
-Wants=xray.service
-
-[Service]
-Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/xray-traffic-monitor; sleep 60; done'
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-END
-
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable xray-quota-monitor >/dev/null 2>&1
-systemctl start xray-quota-monitor >/dev/null 2>&1
 
 # Create systemd service for VPN host capture (runs every 60s)
 cat > /etc/systemd/system/host-capture.service <<-END

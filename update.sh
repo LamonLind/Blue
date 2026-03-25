@@ -7,12 +7,6 @@
 # =========================================
 #
 # Changelog:
-# - Fixed bandwidth quota tracking: Now correctly records full uplink + downlink usage
-#   Fix: Track uplink + downlink accurately (no incorrect division applied)
-#   Enhancement: Now displays upload and download traffic separately for better visibility
-#   Formula: uplink + downlink
-#   Affected files: xray-quota-manager, xray-traffic-monitor, menu-bandwidth.sh
-#
 # - Enhanced host capture system: Now captures more hostname patterns
 #   Added patterns: tcp: prefixed hosts (tcp:bug.cloudflare.com:443)
 #   Added patterns: ws:// and wss:// URL hosts
@@ -20,14 +14,6 @@
 #   Enhanced: SNI capture with tls_sni pattern
 #   Enhanced: Proxy host capture with bug_host pattern
 #   Affected files: capture-host.sh
-#
-# - Added user quota reset feature: Reset bandwidth usage and re-enable users
-#   New script: reset-user-quota.sh for interactive quota reset
-#   Enhanced: xray-quota-manager with 'reset' command
-#   Enhanced: menu-bandwidth.sh with reset option
-#   Feature: Automatic Xray service restart after reset
-#   Feature: Statistics clearing via Xray API
-#   Affected files: xray-quota-manager, menu-bandwidth.sh, reset-user-quota.sh
 #
 # - Added host capture service daemon for continuous monitoring
 #   New service: host-capture.service (systemd service)
@@ -119,14 +105,6 @@ remove_deprecated() {
 manage_services() {
     echo -e "${YELLOW}[INFO]${NC} Managing system services..."
     
-    # Download and install xray-quota-monitor service file
-    echo -ne "${CYAN}Updating xray-quota-monitor.service...${NC}"
-    if wget -q -O /etc/systemd/system/xray-quota-monitor.service "https://${REPO_URL}/xray-quota-monitor.service"; then
-        echo -e " ${GREEN}✓${NC}"
-    else
-        echo -e " ${RED}✗${NC}"
-    fi
-    
     # Download and install host-capture service file (runtime VPN host capture)
     echo -ne "${CYAN}Updating host-capture.service...${NC}"
     if wget -q -O /etc/systemd/system/host-capture.service "https://${REPO_URL}/host-capture.service"; then
@@ -168,14 +146,6 @@ manage_services() {
         echo -e "${GREEN}[INFO]${NC} Restarted host-capture service"
     fi
     
-    # Ensure xray-quota-monitor service is properly configured
-    if [ -f /etc/systemd/system/xray-quota-monitor.service ]; then
-        systemctl daemon-reload
-        systemctl enable xray-quota-monitor 2>/dev/null
-        systemctl restart xray-quota-monitor 2>/dev/null
-        echo -e "${GREEN}[INFO]${NC} Restarted xray-quota-monitor service"
-    fi
-    
     echo -e "${GREEN}[INFO]${NC} Services managed successfully"
 }
 
@@ -207,13 +177,11 @@ update_all_scripts() {
     local scripts=(
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
-        "cek-trafik" "cek-speed" "cek-ram" "limit-speed"
-        "realtime-hosts" "reset-user-quota"
-        "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
-        "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts" "menu-bandwidth" "menu-wildcard"
+        "cek-speed" "cek-ram" "limit-speed"
+        "realtime-hosts" "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
+        "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts" "menu-wildcard"
         "capture-host" "menu-bckp" "usernew" "menu" "wbm" "xp"
         "dns" "netf" "bbr" "backup" "restore"
-        "xray-quota-manager" "xray-traffic-monitor"
     )
     
     local success_count=0
@@ -228,8 +196,6 @@ update_all_scripts() {
             filename="menu4.sh"
         elif [ "$script" == "cek-speed" ]; then
             filename="speedtest_cli.py"
-        elif [ "$script" == "xray-quota-manager" ] || [ "$script" == "xray-traffic-monitor" ]; then
-            filename="${script}"
         fi
         
         if wget -q -O "/usr/bin/${script}" "https://${REPO_URL}/${filename}"; then
@@ -306,18 +272,13 @@ update_component() {
             wget -q -O /usr/bin/autoreboot "https://${REPO_URL}/autoreboot.sh" && chmod +x /usr/bin/autoreboot
             wget -q -O /usr/bin/clearlog "https://${REPO_URL}/clearlog.sh" && chmod +x /usr/bin/clearlog
             wget -q -O /usr/bin/running "https://${REPO_URL}/running.sh" && chmod +x /usr/bin/running
-            wget -q -O /usr/bin/cek-trafik "https://${REPO_URL}/cek-trafik.sh" && chmod +x /usr/bin/cek-trafik
             wget -q -O /usr/bin/xp "https://${REPO_URL}/xp.sh" && chmod +x /usr/bin/xp
             wget -q -O /usr/bin/backup "https://${REPO_URL}/backup.sh" && chmod +x /usr/bin/backup
             wget -q -O /usr/bin/restore "https://${REPO_URL}/restore.sh" && chmod +x /usr/bin/restore
-            wget -q -O /usr/bin/xray-quota-manager "https://${REPO_URL}/xray-quota-manager" && chmod +x /usr/bin/xray-quota-manager
-            wget -q -O /usr/bin/xray-traffic-monitor "https://${REPO_URL}/xray-traffic-monitor" && chmod +x /usr/bin/xray-traffic-monitor
             wget -q -O /usr/bin/capture-host "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/bin/capture-host
             wget -q -O /usr/local/bin/capture-host.sh "https://${REPO_URL}/capture-host.sh" && chmod +x /usr/local/bin/capture-host.sh
             wget -q -O /usr/bin/realtime-hosts "https://${REPO_URL}/realtime-hosts.sh" && chmod +x /usr/bin/realtime-hosts
             wget -q -O /usr/bin/menu-captured-hosts "https://${REPO_URL}/menu-captured-hosts.sh" && chmod +x /usr/bin/menu-captured-hosts
-            wget -q -O /usr/bin/menu-bandwidth "https://${REPO_URL}/menu-bandwidth.sh" && chmod +x /usr/bin/menu-bandwidth
-            wget -q -O /usr/bin/reset-user-quota "https://${REPO_URL}/reset-user-quota.sh" && chmod +x /usr/bin/reset-user-quota
             # Manage services and directories
             ensure_directories
             manage_services

@@ -219,9 +219,24 @@ get_user_traffic_by_id() {
     local escaped_id
     escaped_id=$(escape_xray_pattern "$id")
 
-    uplink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>uplink$" -reset 2>/dev/null | sum_stats_values)
+    local uplink_raw xray_exit
+    uplink_raw=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>uplink$" -reset 2>&1)
+    xray_exit=$?
+    if [ "$xray_exit" -ne 0 ]; then
+        log_msg "WARN: statsquery uplink failed for '$id' (exit $xray_exit): $(echo "$uplink_raw" | head -1)"
+        echo 0; return
+    fi
+    uplink=$(echo "$uplink_raw" | sum_stats_values)
     [ -z "$uplink" ] && uplink=0
-    downlink=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>downlink$" -reset 2>/dev/null | sum_stats_values)
+
+    local downlink_raw
+    downlink_raw=$("$XRAY_BIN" api statsquery --server="$API_SERVER" -pattern "^user>>>$escaped_id>>>traffic>>>downlink$" -reset 2>&1)
+    xray_exit=$?
+    if [ "$xray_exit" -ne 0 ]; then
+        log_msg "WARN: statsquery downlink failed for '$id' (exit $xray_exit): $(echo "$downlink_raw" | head -1)"
+        echo 0; return
+    fi
+    downlink=$(echo "$downlink_raw" | sum_stats_values)
     [ -z "$downlink" ] && downlink=0
 
     echo $((uplink + downlink))
@@ -266,7 +281,24 @@ clear_user_stats() {
 
 ensure_xray_stats_enabled() {
     [ ! -f "$XRAY_CONFIG" ] && return 0
+    local need_update=0
+
+    # Check stats policy flags
     if ! jq -e '.policy.levels["0"].statsUserUplink == true and .policy.levels["0"].statsUserDownlink == true' "$XRAY_CONFIG" >/dev/null 2>&1; then
+        need_update=1
+    fi
+
+    # Check that the API inbound (dokodemo-door) exists
+    if ! jq -e '(.inbounds // [])[] | select(.protocol == "dokodemo-door" and .tag == "api")' "$XRAY_CONFIG" >/dev/null 2>&1; then
+        need_update=1
+    fi
+
+    # Check that a routing rule directing the API tag exists
+    if ! jq -e '(.routing.rules // [])[] | select(.outboundTag == "api")' "$XRAY_CONFIG" >/dev/null 2>&1; then
+        need_update=1
+    fi
+
+    if [ "$need_update" -eq 1 ]; then
         local tmpfile
         tmpfile=$(mktemp)
         jq '
@@ -279,6 +311,22 @@ ensure_xray_stats_enabled() {
           | .stats = (.stats // {})
           | .api.tag = (.api.tag // "api")
           | .api.services = ((.api.services // []) + ["StatsService"] | unique)
+          | if ((.inbounds // []) | map(select(.protocol == "dokodemo-door" and .tag == "api")) | length) == 0
+            then .inbounds = ([{
+                "listen": "127.0.0.1",
+                "port": 10085,
+                "protocol": "dokodemo-door",
+                "settings": {"address": "127.0.0.1"},
+                "tag": "api"
+            }] + (.inbounds // []))
+            else . end
+          | if ((.routing.rules // []) | map(select(.outboundTag == "api")) | length) == 0
+            then .routing.rules = ([{
+                "inboundTag": ["api"],
+                "outboundTag": "api",
+                "type": "field"
+            }] + (.routing.rules // []))
+            else . end
         ' "$XRAY_CONFIG" > "$tmpfile" && mv "$tmpfile" "$XRAY_CONFIG"
         systemctl restart xray 2>/dev/null
     fi
@@ -367,8 +415,14 @@ show_usage() {
     local stored_usage delta
     stored_usage=$(_jq '.total_usage_bytes // 0')
     delta=$(aggregated_usage_for_account "$username" "$uuid")
-    update_account_usage "$uuid" "$delta"
-    usage=$((stored_usage + delta))
+    if [[ "$delta" =~ ^[0-9]+$ ]] && [ "$delta" -gt 0 ]; then
+        update_account_usage "$uuid" "$delta"
+    fi
+    # Re-read the total from DB so concurrent monitoring-service updates are
+    # reflected; fall back to the snapshot computation if the read fails.
+    local usage
+    usage=$(jq -r --arg uuid "$uuid" '.accounts[] | select(.uuid==$uuid) | .total_usage_bytes // 0' "$DB_FILE" 2>/dev/null)
+    [ -z "$usage" ] && usage=$((stored_usage + delta))
     echo -e "${BLUE}Account:${NC} $username"
     echo "UUID: $uuid"
     echo "Expiry: $expiry"

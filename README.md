@@ -115,8 +115,8 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
 ```
    [ Service & Port ]
    - OpenSSH                 : 22
-   - SSH Websocket           : 80
-   - SSH SSL Websocket       : 443
+   - SSH Websocket           : ALL HTTP PORTS
+   - SSH SSL Websocket       : ALL HTTPS PORTA
    - Stunnel5                : 447, 777
    - Dropbear                : 109, 143
    - Badvpn                  : 7100-7300

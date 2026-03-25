@@ -715,14 +715,14 @@ sync_missing_users() {
     if [ -f "$DB_PATH" ]; then
         local cp_err
         if ! cp_err=$(cp "$DB_PATH" "$tmp_db" 2>&1); then
-            log_msg "WARN" "Failed to copy quota DB (${DB_PATH}): ${cp_err:-unknown error}. Proceeding with sync using empty database as base."
+            log_msg "WARN" "Failed to copy quota DB (${DB_PATH}): ${cp_err:-no error output}; proceeding with sync using empty database as base."
             echo '{"users":[]}' > "$tmp_db"
         fi
     else
         echo '{"users":[]}' > "$tmp_db"
     fi
     if ! jq -e '.users | type == "array"' "$tmp_db" >/dev/null 2>&1; then
-        log_msg "WARN" "Quota DB users list invalid; Proceeding with sync using empty database as base."
+        log_msg "WARN" "Quota DB users list invalid; proceeding with sync using empty database as base."
         echo '{"users":[]}' > "$tmp_db"
     fi
     local -A existing_users

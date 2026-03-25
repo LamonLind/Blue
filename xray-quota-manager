@@ -110,7 +110,7 @@ statsquery_sum() {
     fi
     local args=(api statsquery --server="$XRAY_API" --pattern "$pattern")
     if [ "$reset_flag" = "1" ]; then
-        args+=( -reset )
+        args+=( --reset )
     fi
     local output
     if ! output=$("$XRAY_BIN" "${args[@]}" 2>/dev/null); then
@@ -175,11 +175,11 @@ register_account() {
     local limit_gb="$5"
     local configs_json="${6:-{}}"
     if ! validate_limit_gb "$limit_gb"; then
-        echo "Invalid bandwidth limit."
+        echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
         return 1
     fi
     if jq -e --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH" >/dev/null; then
-        echo "User already exists in quota DB."
+        echo "User already exists in quota DB. Use set-limit to update existing user."
         return 1
     fi
     local limit_bytes
@@ -232,7 +232,7 @@ set_limit() {
     local user="$1"
     local limit_gb="$2"
     if ! validate_limit_gb "$limit_gb"; then
-        echo "Invalid bandwidth limit."
+        echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
         return 1
     fi
     local limit_bytes
@@ -253,13 +253,13 @@ extend_limit() {
     local user="$1"
     local extra_gb="$2"
     if ! validate_limit_gb "$extra_gb"; then
-        echo "Invalid bandwidth limit."
+        echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
         return 1
     fi
     local limit_bytes
     limit_bytes=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .bandwidth.limit_bytes' "$DB_PATH")
     if [ "$limit_bytes" -le 0 ]; then
-        echo "User has unlimited bandwidth."
+        echo "User has unlimited bandwidth. Use set-limit to define a quota."
         return 1
     fi
     local extra_bytes
@@ -480,7 +480,7 @@ delete_user() {
     log_msg "INFO" "User ${user} deleted."
 }
 
-remove_db_only() {
+remove_user_record() {
     local user="$1"
     local tmp
     tmp=$(mktemp)
@@ -772,14 +772,17 @@ main() {
         delete)
             delete_user "$2"
             ;;
+        remove-user)
+            remove_user_record "$2"
+            ;;
         remove-db)
-            remove_db_only "$2"
+            remove_user_record "$2"
             ;;
         rebuild)
             rebuild_db
             ;;
         *)
-            echo "Usage: $0 {register|usage|reset|disable|enable|enforce|set-limit|extend-limit|set-expiry|show|dashboard|delete|remove-db|rebuild}"
+            echo "Usage: $0 {register|usage|reset|disable|enable|enforce|set-limit|extend-limit|set-expiry|show|dashboard|delete|remove-user|remove-db|rebuild}"
             exit 1
             ;;
     esac

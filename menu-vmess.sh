@@ -205,7 +205,7 @@ sed -i "/^### $user $exp/,/^},{/d" /etc/xray/config.json
     rm -f /home/vps/public_html/vmess-$user.txt
     systemctl restart xray.service
     if command -v xray-quota-manager >/dev/null 2>&1; then
-        xray-quota-manager remove-db "$user" >/dev/null 2>&1
+        xray-quota-manager remove-user "$user" >/dev/null 2>&1
     fi
 clear
 echo ""

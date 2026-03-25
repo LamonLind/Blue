@@ -96,17 +96,6 @@ uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
 
-# Bandwidth quota prompt (like 3x-ui)
-echo ""
-echo -e "${YELLOW}Bandwidth Quota Limit:${NC}"
-echo "Enter data quota limit (e.g., 10GB, 500MB, 1TB)"
-echo "Press Enter for unlimited"
-read -p "Quota: " quota_limit
-if [ -n "$quota_limit" ]; then
-    # Set quota using quota manager
-    /usr/bin/xray-quota-manager create "$user" "$quota_limit" "$exp" "$uuid" 2>/dev/null
-fi
-
 sed -i '/#trojanws$/a\#tr '"$user $exp"'\
 },{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#trojangrpc$/a\#trg '"$user $exp"'\

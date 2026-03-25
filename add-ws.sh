@@ -99,24 +99,6 @@ uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
 
-# Bandwidth quota prompt
-echo ""
-echo -e "${YELLOW}Bandwidth Quota Limit:${NC}"
-echo "Enter data quota limit (e.g., 100GB)"
-until echo "$quota_limit" | grep -qiE '^[0-9]+([.][0-9]+)?[KMGTP]?B?$'; do
-    read -p "Quota: " quota_limit
-    if ! echo "$quota_limit" | grep -qiE '^[0-9]+([.][0-9]+)?[KMGTP]?B?$'; then
-        echo -e "${EROR} Invalid quota format. Example: 100GB"
-    fi
-done
-
-# Create aggregated bandwidth account record
-if ! /usr/bin/xray-quota-manager create "$user" "$quota_limit" "$exp" "$uuid"; then
-    echo -e "${EROR} Failed to create bandwidth account record."
-    read -n 1 -s -r -p "Press any key to back on menu"
-    menu
-fi
-
 sed -i '/#vmess$/a\#vms '"$user $exp"'\
 },{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#vmessworry$/a\### '"$user $exp"'\

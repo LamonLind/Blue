@@ -194,37 +194,25 @@ escape_xray_pattern() {
 }
 
 get_user_usage() {
-    local user="$1"
-    local record
-    record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
-    if [ -z "$record" ]; then
-        echo "UNAVAILABLE"
-        return 1
+    local username="$1"
+    [ -z "$XRAY_BIN" ] && { echo "0"; return; }
+    local total_bytes
+    total_bytes=$("$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "user>>" \
+        | jq -r --arg user "$username" '
+            .stat[]?
+            | select(.name | contains("user>>" + $user + ">>"))
+            | .value
+        ' 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+    if [ -z "$total_bytes" ]; then
+        echo "0"
+        return
     fi
-    local limit
-    limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
-    # Query live Xray Stats API — no stored-value fallback.
-    if ! xray_api_reachable; then
-        echo "UNAVAILABLE"
-        return 1
-    fi
-    local uplink downlink
-    if ! uplink=$(query_user_stat "$user" "uplink" "0"); then
-        echo "UNAVAILABLE"
-        return 1
-    fi
-    downlink=$(query_user_stat "$user" "downlink" "0") || downlink=0
-    local total_used=$((uplink + downlink))
-    local remaining=-1
-    local percent=0
-    if [ "$limit" -gt 0 ]; then
-        remaining=$((limit - total_used))
-        if [ "$remaining" -lt 0 ]; then
-            remaining=0
-        fi
-        percent=$((total_used * 100 / limit))
-    fi
-    echo "${total_used}|${limit}|${remaining}|${percent}"
+    echo "$total_bytes"
+}
+
+convert_to_mb() {
+    local bytes="$1"
+    echo "scale=2; $bytes/1024/1024" | bc
 }
 
 register_account() {
@@ -807,8 +795,6 @@ show_user() {
         echo "User not found."
         return 1
     fi
-    local usage
-    usage=$(get_user_usage "$user")
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "USER DETAILS"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -819,26 +805,25 @@ show_user() {
     local limit_bytes
     limit_bytes=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
     echo "Bandwidth   : $(format_limit "$limit_bytes")"
-    if [ "$usage" = "UNAVAILABLE" ]; then
-        echo "Used        : Tracking Not Working"
-        echo "Remaining   : Tracking Not Working"
-        echo "Usage       : Tracking Not Working"
+    local bytes used_mb
+    bytes=$(get_user_usage "$user")
+    used_mb=$(convert_to_mb "$bytes")
+    local remaining_label
+    if [ "$limit_bytes" -le 0 ]; then
+        remaining_label="∞"
     else
-        local used_bytes limit_val remaining_bytes percent
-        used_bytes=$(echo "$usage" | cut -d'|' -f1)
-        limit_val=$(echo "$usage" | cut -d'|' -f2)
-        remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
-        percent=$(echo "$usage" | cut -d'|' -f4)
-        local remaining_label
-        if [ "$limit_val" -le 0 ]; then
-            remaining_label="∞"
-        else
-            remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
-        fi
-        echo "Used        : $(format_usage_value "$used_bytes")"
-        echo "Remaining   : ${remaining_label}"
-        echo "Usage       : $(usage_bar "$used_bytes" "$limit_val") $(format_usage_value "$used_bytes") / $(format_limit "$limit_val") (${percent}%)"
+        local remaining_bytes=$((limit_bytes - bytes))
+        if [ "$remaining_bytes" -lt 0 ]; then remaining_bytes=0; fi
+        remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
     fi
+    local percent=0
+    if [ "$limit_bytes" -gt 0 ]; then
+        percent=$((bytes * 100 / limit_bytes))
+        if [ "$percent" -gt 100 ]; then percent=100; fi
+    fi
+    echo "Used        : ${used_mb} MB"
+    echo "Remaining   : ${remaining_label}"
+    echo "Usage       : $(usage_bar "$bytes" "$limit_bytes") ${used_mb} MB / $(format_limit "$limit_bytes") (${percent}%)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
@@ -865,25 +850,18 @@ dashboard() {
         if [ -z "$user" ]; then
             continue
         fi
-        local usage
-        usage=$(get_user_usage "$user")
         local used_label remaining_label limit_label
         limit_label=$(format_limit "$limit_bytes")
-        if [ "$usage" = "UNAVAILABLE" ]; then
-            used_label="Tracking Not Working"
-            remaining_label="N/A"
+        local bytes used_mb
+        bytes=$(get_user_usage "$user")
+        used_mb=$(convert_to_mb "$bytes")
+        used_label="${used_mb} MB"
+        if [ "$limit_bytes" -le 0 ]; then
+            remaining_label="∞"
         else
-            local used_bytes limit remaining_bytes
-            used_bytes=$(echo "$usage" | cut -d'|' -f1)
-            limit=$(echo "$usage" | cut -d'|' -f2)
-            remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
-            limit_label=$(format_limit "$limit")
-            used_label=$(format_usage_value "$used_bytes")
-            if [ "$limit" -le 0 ]; then
-                remaining_label="∞"
-            else
-                remaining_label=$(format_usage_value "$remaining_bytes")
-            fi
+            local remaining_bytes=$((limit_bytes - bytes))
+            if [ "$remaining_bytes" -lt 0 ]; then remaining_bytes=0; fi
+            remaining_label=$(format_usage_value "$remaining_bytes")
         fi
         printf "%-3s %-12s %-9s %-12s %-22s %-22s %-9s %-10s\n" \
             "$idx" \

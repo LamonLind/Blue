@@ -185,7 +185,7 @@ get_user_usage() {
     local uplink downlink
     local escaped_user
     escaped_user=$(escape_xray_pattern "$user")
-    # FIX: Don't reset stats here, just read them
+    # Peek at live Xray stats (no reset) to show traffic since last enforce cycle
     uplink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 0)
     downlink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 0)
     local current_total=$((uplink + downlink))
@@ -202,37 +202,36 @@ get_user_usage() {
     echo "${total_used}|${limit}|${remaining}|${percent}"
 }
 
-# FIX: Properly update account usage by adding current stats to stored value
 update_account_usage() {
     local user="$1"
     local escaped_user
     escaped_user=$(escape_xray_pattern "$user")
-    
-    # Get current stats WITHOUT resetting
+
+    # Atomically drain (read + reset) per-user stats so the value is a clean
+    # delta for this polling interval.  Using --reset prevents double-counting:
+    # if we only read without resetting, the same bytes would be added again on
+    # the next enforce cycle.
     local uplink downlink
-    uplink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 0)
-    downlink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 0)
-    local current_total=$((uplink + downlink))
-    
-    if [ "$current_total" -le 0 ]; then
+    uplink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1)
+    downlink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1)
+    local delta=$((uplink + downlink))
+
+    if [ "$delta" -le 0 ]; then
         return
     fi
-    
-    # Get stored used bytes
+
     local stored_used
     stored_used=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .bandwidth.used_bytes // 0' "$DB_PATH")
-    
-    # Calculate new total
-    local new_total=$((stored_used + current_total))
-    
-    # Update database
+
+    local new_total=$((stored_used + delta))
+
     local tmp
     tmp=$(mktemp)
     jq --arg user "$user" --argjson new_total "$new_total" '
         (.users[] | select(.username==$user) | .bandwidth.used_bytes) = $new_total
     ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
-    
-    log_msg "INFO" "Updated ${user}: +$(format_usage_value "$current_total") (total: $(format_usage_value "$new_total"))"
+
+    log_msg "INFO" "Updated ${user}: +$(format_usage_value "$delta") (total: $(format_usage_value "$new_total"))"
 }
 
 register_account() {
@@ -599,12 +598,97 @@ send_webhook() {
         -d "{\"user\":\"${user}\",\"used_bytes\":${used_bytes},\"limit_bytes\":${limit_bytes}}" >/dev/null 2>&1 || true
 }
 
-# FIX: Completely rewritten enforce_quotas to properly track and update usage
+# Verify that Xray config.json has all components required for per-user traffic
+# statistics, and add any that are missing.  This self-heals deployments where
+# the API or policy blocks were accidentally removed.
+ensure_xray_stats_enabled() {
+    if [ ! -f "$CONFIG_PATH" ]; then
+        log_msg "WARN" "Xray config not found at ${CONFIG_PATH}; skipping stats check."
+        return
+    fi
+    if ! jq empty "$CONFIG_PATH" >/dev/null 2>&1; then
+        log_msg "WARN" "Xray config is not valid JSON; skipping stats check."
+        return
+    fi
+
+    local changed=0
+    local tmp
+    tmp=$(mktemp)
+    cp "$CONFIG_PATH" "$tmp"
+
+    # 1. Ensure "stats" key exists
+    if ! jq -e '.stats' "$tmp" >/dev/null 2>&1; then
+        jq '. + {"stats": {}}' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing 'stats' block to Xray config."
+    fi
+
+    # 2. Ensure "api" block with StatsService exists
+    if ! jq -e '.api.services[]? | select(. == "StatsService")' "$tmp" >/dev/null 2>&1; then
+        jq '.api.services += ["StatsService"] | .api.tag //= "api"' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing 'api' StatsService block to Xray config."
+    fi
+
+    # 3. Ensure per-user uplink/downlink policy flags
+    local need_policy=0
+    if ! jq -e '.policy.levels["0"].statsUserUplink == true' "$tmp" >/dev/null 2>&1; then
+        need_policy=1
+    fi
+    if ! jq -e '.policy.levels["0"].statsUserDownlink == true' "$tmp" >/dev/null 2>&1; then
+        need_policy=1
+    fi
+    if [ "$need_policy" -eq 1 ]; then
+        jq '
+            .policy.levels["0"].statsUserUplink = true
+            | .policy.levels["0"].statsUserDownlink = true
+        ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Enabled statsUserUplink/Downlink in Xray policy."
+    fi
+
+    # 4. Ensure dokodemo-door inbound listening on 127.0.0.1:10085 with tag "api"
+    if ! jq -e '.inbounds[]? | select(.tag == "api" and .protocol == "dokodemo-door")' "$tmp" >/dev/null 2>&1; then
+        jq '.inbounds += [{
+            "listen": "127.0.0.1",
+            "port": 10085,
+            "protocol": "dokodemo-door",
+            "settings": {"address": "127.0.0.1"},
+            "tag": "api"
+        }]' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing dokodemo-door API inbound to Xray config."
+    fi
+
+    # 5. Ensure routing rule that directs inbound api tag to api outbound
+    if ! jq -e '.routing.rules[]? | select(.inboundTag[]? == "api")' "$tmp" >/dev/null 2>&1; then
+        jq '
+            if .routing == null then .routing = {"rules": []} else . end
+            | .routing.rules += [{"type": "field", "inboundTag": ["api"], "outboundTag": "api"}]
+        ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing API routing rule to Xray config."
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+        backup_config
+        mv "$tmp" "$CONFIG_PATH"
+        log_msg "INFO" "Xray config updated; restarting xray."
+        systemctl restart xray >/dev/null 2>&1 || true
+        # Allow Xray time to fully initialize before statsquery is called
+        sleep 2
+    else
+        rm -f "$tmp"
+    fi
+}
+
 enforce_quotas() {
     local now_ts
     now_ts=$(date -u +%s)
     backup_db
-    
+
+    ensure_xray_stats_enabled
+
     # Get all active users
     local users
     users=$(jq -r '.users[]? | select(.status=="active") | .username' "$DB_PATH")
@@ -660,15 +744,6 @@ enforce_quotas() {
                 send_webhook "$user" "$used" "$limit"
             fi
         fi
-    done
-    
-    # FIX: Reset Xray stats AFTER collecting them for ALL users
-    # This ensures we don't lose data from the current monitoring cycle
-    for user in $users; do
-        local escaped_user
-        escaped_user=$(escape_xray_pattern "$user")
-        statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1 >/dev/null
-        statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1 >/dev/null
     done
     
     log_msg "INFO" "Quota enforcement completed for $(echo "$users" | wc -w) active users"

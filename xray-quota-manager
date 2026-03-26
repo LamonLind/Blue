@@ -54,6 +54,7 @@ db_init() {
         rebuild_db
     fi
     sync_missing_users
+    ensure_xray_stats_enabled
 }
 
 backup_db() {
@@ -696,6 +697,23 @@ ensure_xray_stats_enabled() {
         ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
         changed=1
         log_msg "INFO" "Added missing API routing rule to Xray config."
+    fi
+
+    # 6. Ensure system-level inbound stats are enabled under policy.system
+    local need_system=0
+    if ! jq -e '.policy.system.statsInboundUplink == true' "$tmp" >/dev/null 2>&1; then
+        need_system=1
+    fi
+    if ! jq -e '.policy.system.statsInboundDownlink == true' "$tmp" >/dev/null 2>&1; then
+        need_system=1
+    fi
+    if [ "$need_system" -eq 1 ]; then
+        jq '
+            .policy.system.statsInboundUplink = true
+            | .policy.system.statsInboundDownlink = true
+        ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Enabled statsInboundUplink/Downlink in Xray policy.system."
     fi
 
     if [ "$changed" -eq 1 ]; then

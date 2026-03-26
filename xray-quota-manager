@@ -195,14 +195,14 @@ escape_xray_pattern() {
 
 get_user_usage() {
     local username="$1"
-    [ -z "$XRAY_BIN" ] && { echo "0"; return; }
-    local total_bytes
-    total_bytes=$("$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "user>>" \
-        | jq -r --arg user "$username" '
-            .stat[]?
-            | select(.name | contains("user>>" + $user + ">>"))
-            | .value
-        ' 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+
+    local total_bytes=$(xray api statsquery --server=127.0.0.1:10085 --pattern "user>>" \
+    | jq -r --arg user "$username" '
+      .stat[]
+      | select(.name | contains("user>>" + $user + ">>"))
+      | .value
+    ' | awk '{sum+=$1} END {print sum}')
+
     if [ -z "$total_bytes" ]; then
         echo "0"
         return
@@ -788,9 +788,9 @@ usage_bar() {
 }
 
 show_user() {
-    local user="$1"
+    local username="$1"
     local record
-    record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
+    record=$(jq -r --arg user "$username" '.users[]? | select(.username==$user)' "$DB_PATH")
     if [ -z "$record" ]; then
         echo "User not found."
         return 1
@@ -806,7 +806,7 @@ show_user() {
     limit_bytes=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
     echo "Bandwidth   : $(format_limit "$limit_bytes")"
     local bytes used_mb
-    bytes=$(get_user_usage "$user")
+    bytes=$(get_user_usage "$username")
     used_mb=$(convert_to_mb "$bytes")
     local remaining_label
     if [ "$limit_bytes" -le 0 ]; then
@@ -846,14 +846,14 @@ dashboard() {
         users=$(jq -r --arg status "$status_filter" '.users[]? | select(.status==$status) | [.username,.protocol,.bandwidth.limit_bytes,.expiry,.status] | @tsv' "$DB_PATH")
     fi
     local idx=1
-    while IFS=$'\t' read -r user protocol limit_bytes expiry status; do
-        if [ -z "$user" ]; then
+    while IFS=$'\t' read -r username protocol limit_bytes expiry status; do
+        if [ -z "$username" ]; then
             continue
         fi
         local used_label remaining_label limit_label
         limit_label=$(format_limit "$limit_bytes")
         local bytes used_mb
-        bytes=$(get_user_usage "$user")
+        bytes=$(get_user_usage "$username")
         used_mb=$(convert_to_mb "$bytes")
         used_label="${used_mb} MB"
         if [ "$limit_bytes" -le 0 ]; then
@@ -865,7 +865,7 @@ dashboard() {
         fi
         printf "%-3s %-12s %-9s %-12s %-22s %-22s %-9s %-10s\n" \
             "$idx" \
-            "$user" \
+            "$username" \
             "$(echo "$protocol" | tr '[:lower:]' '[:upper:]')" \
             "$limit_label" \
             "$used_label" \

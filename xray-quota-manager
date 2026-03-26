@@ -199,24 +199,23 @@ get_user_usage() {
     local record
     record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
     if [ -z "$record" ]; then
-        echo "0|0|0|0"
+        echo "UNAVAILABLE"
         return 1
     fi
-    local stored limit
-    stored=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
+    local limit
     limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
-    local total_used=$stored
-    # Add live (un-drained) Xray stats when the API is reachable, so the
-    # dashboard reflects traffic accumulated since the last enforce cycle.
-    if xray_api_reachable; then
-        local uplink downlink
-        if uplink=$(query_user_stat "$user" "uplink" "0"); then
-            downlink=$(query_user_stat "$user" "downlink" "0") || downlink=0
-            total_used=$((stored + uplink + downlink))
-        else
-            log_msg "WARN" "Could not fetch live uplink stat for ${user}; using stored value only."
-        fi
+    # Query live Xray Stats API — no stored-value fallback.
+    if ! xray_api_reachable; then
+        echo "UNAVAILABLE"
+        return 1
     fi
+    local uplink downlink
+    if ! uplink=$(query_user_stat "$user" "uplink" "0"); then
+        echo "UNAVAILABLE"
+        return 1
+    fi
+    downlink=$(query_user_stat "$user" "downlink" "0") || downlink=0
+    local total_used=$((uplink + downlink))
     local remaining=-1
     local percent=0
     if [ "$limit" -gt 0 ]; then
@@ -227,42 +226,6 @@ get_user_usage() {
         percent=$((total_used * 100 / limit))
     fi
     echo "${total_used}|${limit}|${remaining}|${percent}"
-}
-
-update_account_usage() {
-    local user="$1"
-
-    # Atomically drain (read + reset) per-user stats so the value is a clean
-    # delta for this polling interval.  Using --reset prevents double-counting:
-    # if we only read without resetting, the same bytes would be added again on
-    # the next enforce cycle.
-    local uplink downlink
-    if ! uplink=$(query_user_stat "$user" "uplink" "1"); then
-        log_msg "WARN" "Xray stats unavailable for ${user}; skipping usage update."
-        return 1
-    fi
-    if ! downlink=$(query_user_stat "$user" "downlink" "1"); then
-        log_msg "WARN" "Xray stats unavailable for ${user}; skipping usage update."
-        return 1
-    fi
-    local delta=$((uplink + downlink))
-
-    if [ "$delta" -le 0 ]; then
-        return
-    fi
-
-    local stored_used
-    stored_used=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .bandwidth.used_bytes // 0' "$DB_PATH")
-
-    local new_total=$((stored_used + delta))
-
-    local tmp
-    tmp=$(mktemp)
-    jq --arg user "$user" --argjson new_total "$new_total" '
-        (.users[] | select(.username==$user) | .bandwidth.used_bytes) = $new_total
-    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
-
-    log_msg "INFO" "Updated ${user}: +$(format_usage_value "$delta") (total: $(format_usage_value "$new_total"))"
 }
 
 register_account() {
@@ -735,10 +698,10 @@ enforce_quotas() {
 
     ensure_xray_stats_enabled
 
-    # Verify the Xray stats API is responding before draining per-user counters.
-    # When the API is unreachable we must NOT enforce bandwidth quotas using stale
-    # zero values — that would falsely disable users whose real usage has not been
-    # measured.  Expiry checks are independent of the API and always run.
+    # Verify the Xray stats API is responding before querying per-user counters.
+    # When the API is unreachable we must NOT enforce bandwidth quotas — that
+    # would falsely disable users whose real usage has not been measured.
+    # Expiry checks are independent of the API and always run.
     local api_ok=1
     if ! xray_api_reachable; then
         log_msg "WARN" "Xray stats API unreachable; bandwidth quota enforcement skipped this cycle."
@@ -750,22 +713,16 @@ enforce_quotas() {
     users=$(jq -r '.users[]? | select(.status=="active") | .username' "$DB_PATH")
     
     for user in $users; do
-        # Drain and accumulate traffic only when the API is reachable
-        if [ "$api_ok" -eq 1 ]; then
-            update_account_usage "$user"
-        fi
-        
-        # Get updated record
+        # Get current record
         local record
         record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
         if [ -z "$record" ]; then
             continue
         fi
         
-        local expiry limit used
+        local expiry limit
         expiry=$(echo "$record" | jq -r '.expiry')
         limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
-        used=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
         
         # Check expiry (independent of API availability)
         if [ -n "$expiry" ] && [ "$expiry" != "null" ]; then
@@ -782,9 +739,16 @@ enforce_quotas() {
             fi
         fi
         
-        # Check quota only when the API is available so we never enforce on
-        # unmeasured (zero) traffic data.
+        # Bandwidth enforcement requires live API stats — never use stored values.
         if [ "$api_ok" -eq 1 ] && [ "$limit" -gt 0 ]; then
+            local uplink downlink used
+            if ! uplink=$(query_user_stat "$user" "uplink" "0"); then
+                log_msg "WARN" "Xray stats unavailable for ${user}; skipping bandwidth enforcement."
+                continue
+            fi
+            downlink=$(query_user_stat "$user" "downlink" "0") || downlink=0
+            used=$((uplink + downlink))
+
             local allowed=$limit
             if [ "$OVERAGE_PERCENT" -gt 0 ]; then
                 allowed=$((limit + (limit * OVERAGE_PERCENT / 100)))
@@ -846,19 +810,6 @@ show_user() {
     fi
     local usage
     usage=$(get_user_usage "$user")
-    local used_bytes limit_bytes remaining_bytes percent
-    used_bytes=$(echo "$usage" | cut -d'|' -f1)
-    limit_bytes=$(echo "$usage" | cut -d'|' -f2)
-    remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
-    percent=$(echo "$usage" | cut -d'|' -f4)
-    local limit_label
-    limit_label=$(format_limit "$limit_bytes")
-    local remaining_label
-    if [ "$limit_bytes" -le 0 ]; then
-        remaining_label="∞"
-    else
-        remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
-    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "USER DETAILS"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -866,10 +817,29 @@ show_user() {
     echo "Protocol    : $(echo "$record" | jq -r '.protocol' | tr '[:lower:]' '[:upper:]')"
     echo "Expiry      : $(echo "$record" | jq -r '.expiry')"
     echo "Status      : $(echo "$record" | jq -r '.status' | tr '[:lower:]' '[:upper:]')"
-    echo "Bandwidth   : ${limit_label}"
-    echo "Used        : $(format_usage_value "$used_bytes")"
-    echo "Remaining   : ${remaining_label}"
-    echo "Usage       : $(usage_bar "$used_bytes" "$limit_bytes") $(format_usage_value "$used_bytes") / ${limit_label} (${percent}%)"
+    local limit_bytes
+    limit_bytes=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
+    echo "Bandwidth   : $(format_limit "$limit_bytes")"
+    if [ "$usage" = "UNAVAILABLE" ]; then
+        echo "Used        : Tracking Not Working"
+        echo "Remaining   : Tracking Not Working"
+        echo "Usage       : Tracking Not Working"
+    else
+        local used_bytes limit_val remaining_bytes percent
+        used_bytes=$(echo "$usage" | cut -d'|' -f1)
+        limit_val=$(echo "$usage" | cut -d'|' -f2)
+        remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
+        percent=$(echo "$usage" | cut -d'|' -f4)
+        local remaining_label
+        if [ "$limit_val" -le 0 ]; then
+            remaining_label="∞"
+        else
+            remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
+        fi
+        echo "Used        : $(format_usage_value "$used_bytes")"
+        echo "Remaining   : ${remaining_label}"
+        echo "Usage       : $(usage_bar "$used_bytes" "$limit_val") $(format_usage_value "$used_bytes") / $(format_limit "$limit_val") (${percent}%)"
+    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
@@ -879,11 +849,11 @@ dashboard() {
     echo "USER MANAGEMENT DASHBOARD"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     if ! xray_api_reachable; then
-        echo "WARNING: Xray stats API unavailable — showing stored usage only."
+        echo "WARNING: Tracking Not Working — Xray stats API unavailable."
         echo "         Bandwidth quota enforcement is suspended until API is reachable."
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     fi
-    printf "%-3s %-12s %-9s %-12s %-9s %-12s %-9s %-10s\n" "ID" "Username" "Protocol" "Limit" "Used" "Remaining" "Status" "Expiry"
+    printf "%-3s %-12s %-9s %-12s %-22s %-22s %-9s %-10s\n" "ID" "Username" "Protocol" "Limit" "Used" "Remaining" "Status" "Expiry"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     local users
     if [ "$status_filter" = "all" ]; then
@@ -898,25 +868,25 @@ dashboard() {
         fi
         local usage
         usage=$(get_user_usage "$user")
-        local used_bytes limit remaining_bytes
-        used_bytes=$(echo "$usage" | cut -d'|' -f1)
-        limit=$(echo "$usage" | cut -d'|' -f2)
-        remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
-        local limit_label
-        if [ "$limit" -le 0 ]; then
-            limit_label="Unlimited"
+        local used_label remaining_label limit_label
+        limit_label=$(format_limit "$limit_bytes")
+        if [ "$usage" = "UNAVAILABLE" ]; then
+            used_label="Tracking Not Working"
+            remaining_label="N/A"
         else
-            limit_label="$(bytes_to_gb "$limit") GB"
+            local used_bytes limit remaining_bytes
+            used_bytes=$(echo "$usage" | cut -d'|' -f1)
+            limit=$(echo "$usage" | cut -d'|' -f2)
+            remaining_bytes=$(echo "$usage" | cut -d'|' -f3)
+            limit_label=$(format_limit "$limit")
+            used_label=$(format_usage_value "$used_bytes")
+            if [ "$limit" -le 0 ]; then
+                remaining_label="∞"
+            else
+                remaining_label=$(format_usage_value "$remaining_bytes")
+            fi
         fi
-        local used_label
-        used_label="$(format_usage_value "$used_bytes")"
-        local remaining_label
-        if [ "$limit" -le 0 ]; then
-            remaining_label="∞"
-        else
-            remaining_label="$(format_usage_value "$remaining_bytes")"
-        fi
-        printf "%-3s %-12s %-9s %-12s %-9s %-12s %-9s %-10s\n" \
+        printf "%-3s %-12s %-9s %-12s %-22s %-22s %-9s %-10s\n" \
             "$idx" \
             "$user" \
             "$(echo "$protocol" | tr '[:lower:]' '[:upper:]')" \

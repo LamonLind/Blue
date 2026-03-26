@@ -120,50 +120,72 @@ validate_limit_gb() {
     return 0
 }
 
-statsquery_sum() {
-    local pattern="$1"
-    local reset_flag="$2"
-    if [ -z "$XRAY_BIN" ]; then
-        echo 0
+# Verify the Xray gRPC stats API is reachable.  Returns 0 when the API
+# responds to a no-match query, 1 otherwise.
+xray_api_reachable() {
+    [ -z "$XRAY_BIN" ] && return 1
+    "$XRAY_BIN" api statsquery --server="$XRAY_API" --pattern "^$" >/dev/null 2>&1
+}
+
+# Parse bytes from a single xray api statsquery response.
+# Handles proto3 JSON (int64 may arrive as a quoted string) and text/proto format.
+# When a string value is not a valid integer, tonumber? returns null and the //0
+# guard converts it to 0; the awk fallback below then provides a second parse
+# attempt using the text/proto representation of the same output.
+parse_stat_value() {
+    local raw="$1"
+    local val
+    # JSON path: .value may be a JSON number or a proto3-encoded quoted string.
+    val=$(printf '%s' "$raw" | jq -r '
+        .stat // [] |
+        map(.value | if type == "number" then .
+                     elif type == "string" then tonumber? // 0
+                     else 0 end) |
+        add // 0
+    ' 2>/dev/null)
+    if [[ "$val" =~ ^[0-9]+$ ]]; then
+        echo "$val"
+        return 0
+    fi
+    # Text/proto format fallback: match bare digits after "value:"
+    val=$(printf '%s' "$raw" | awk '
+        BEGIN { total=0 }
+        {
+            line=$0
+            while (match(line, /value:[[:space:]]*[0-9]+/)) {
+                seg=substr(line, RSTART, RLENGTH)
+                sub(/value:[[:space:]]*/, "", seg)
+                total+=seg
+                line=substr(line, RSTART + RLENGTH)
+            }
+        }
+        END { print total+0 }
+    ')
+    echo "${val:-0}"
+}
+
+# Query traffic bytes for one user in one direction.
+# $1: username (must match the email field set in xray config)
+# $2: direction — "uplink" or "downlink"
+# $3: "1" to atomically drain (read+reset) the counter, "0" to peek only
+# Prints bytes on stdout; returns 1 if the API call fails.
+query_user_stat() {
+    local user="$1"
+    local direction="$2"
+    local reset="${3:-0}"
+    [ -z "$XRAY_BIN" ] && return 1
+    local escaped
+    escaped=$(escape_xray_pattern "$user")
+    local args=( api statsquery --server="$XRAY_API"
+                 --pattern "^user>>>${escaped}>>>traffic>>>${direction}$" )
+    [ "$reset" = "1" ] && args+=( --reset )
+    local raw err
+    if ! raw=$("$XRAY_BIN" "${args[@]}" 2>/tmp/xray_stat_err); then
+        err=$(cat /tmp/xray_stat_err 2>/dev/null)
+        log_msg "WARN" "Xray statsquery failed for ${user}/${direction}: ${err:-unknown error}"
         return 1
     fi
-    local args=(api statsquery --server="$XRAY_API" --pattern "$pattern")
-    if [ "$reset_flag" = "1" ]; then
-        args+=( --reset )
-    fi
-    local output
-    if ! output=$("$XRAY_BIN" "${args[@]}" 2>/dev/null); then
-        log_msg "WARN" "Statsquery failed for pattern ${pattern}"
-        echo 0
-        return 1
-    fi
-    local sum
-    if ! sum=$(echo "$output" | jq -r '[.stat[]?.value // 0] | add // 0' 2>/dev/null); then
-        sum=""
-    fi
-    if [ -z "$sum" ]; then
-        sum=$(echo "$output" | awk '
-            BEGIN { total=0; found=0 }
-            {
-                line=$0
-                while (match(line, /value:[[:space:]]*[0-9]+/)) {
-                    val=substr(line, RSTART, RLENGTH)
-                    sub(/value:[[:space:]]*/, "", val)
-                    total+=val
-                    found=1
-                    line=substr(line, RSTART + RLENGTH)
-                }
-            }
-            END {
-                if (found) {
-                    print total
-                } else {
-                    print 0
-                }
-            }
-        ')
-    fi
-    echo "${sum:-0}"
+    parse_stat_value "$raw"
 }
 
 escape_xray_pattern() {
@@ -182,14 +204,18 @@ get_user_usage() {
     local stored limit
     stored=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
     limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
-    local uplink downlink
-    local escaped_user
-    escaped_user=$(escape_xray_pattern "$user")
-    # Peek at live Xray stats (no reset) to show traffic since last enforce cycle
-    uplink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 0)
-    downlink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 0)
-    local current_total=$((uplink + downlink))
-    local total_used=$((stored + current_total))
+    local total_used=$stored
+    # Add live (un-drained) Xray stats when the API is reachable, so the
+    # dashboard reflects traffic accumulated since the last enforce cycle.
+    if xray_api_reachable; then
+        local uplink downlink
+        if uplink=$(query_user_stat "$user" "uplink" "0"); then
+            downlink=$(query_user_stat "$user" "downlink" "0") || downlink=0
+            total_used=$((stored + uplink + downlink))
+        else
+            log_msg "WARN" "Could not fetch live uplink stat for ${user}; using stored value only."
+        fi
+    fi
     local remaining=-1
     local percent=0
     if [ "$limit" -gt 0 ]; then
@@ -204,16 +230,20 @@ get_user_usage() {
 
 update_account_usage() {
     local user="$1"
-    local escaped_user
-    escaped_user=$(escape_xray_pattern "$user")
 
     # Atomically drain (read + reset) per-user stats so the value is a clean
     # delta for this polling interval.  Using --reset prevents double-counting:
     # if we only read without resetting, the same bytes would be added again on
     # the next enforce cycle.
     local uplink downlink
-    uplink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1)
-    downlink=$(statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1)
+    if ! uplink=$(query_user_stat "$user" "uplink" "1"); then
+        log_msg "WARN" "Xray stats unavailable for ${user}; skipping usage update."
+        return 1
+    fi
+    if ! downlink=$(query_user_stat "$user" "downlink" "1"); then
+        log_msg "WARN" "Xray stats unavailable for ${user}; skipping usage update."
+        return 1
+    fi
     local delta=$((uplink + downlink))
 
     if [ "$delta" -le 0 ]; then
@@ -522,12 +552,10 @@ enable_user() {
 
 reset_bandwidth() {
     local user="$1"
-    local escaped_user
-    escaped_user=$(escape_xray_pattern "$user")
-    # FIX: Reset Xray stats
-    statsquery_sum "^user>>>${escaped_user}>>>traffic>>>uplink$" 1 >/dev/null
-    statsquery_sum "^user>>>${escaped_user}>>>traffic>>>downlink$" 1 >/dev/null
-    # FIX: Reset stored usage to 0
+    # Drain any live Xray stats for this user so the counter is clean after reset
+    query_user_stat "$user" "uplink" "1" >/dev/null 2>&1 || true
+    query_user_stat "$user" "downlink" "1" >/dev/null 2>&1 || true
+    # Reset stored usage to 0
     local now
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local tmp
@@ -689,13 +717,25 @@ enforce_quotas() {
 
     ensure_xray_stats_enabled
 
+    # Verify the Xray stats API is responding before draining per-user counters.
+    # When the API is unreachable we must NOT enforce bandwidth quotas using stale
+    # zero values — that would falsely disable users whose real usage has not been
+    # measured.  Expiry checks are independent of the API and always run.
+    local api_ok=1
+    if ! xray_api_reachable; then
+        log_msg "WARN" "Xray stats API unreachable; bandwidth quota enforcement skipped this cycle."
+        api_ok=0
+    fi
+
     # Get all active users
     local users
     users=$(jq -r '.users[]? | select(.status=="active") | .username' "$DB_PATH")
     
     for user in $users; do
-        # Update usage for this user
-        update_account_usage "$user"
+        # Drain and accumulate traffic only when the API is reachable
+        if [ "$api_ok" -eq 1 ]; then
+            update_account_usage "$user"
+        fi
         
         # Get updated record
         local record
@@ -709,7 +749,7 @@ enforce_quotas() {
         limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
         used=$(echo "$record" | jq -r '.bandwidth.used_bytes // 0')
         
-        # Check expiry
+        # Check expiry (independent of API availability)
         if [ -n "$expiry" ] && [ "$expiry" != "null" ]; then
             local expiry_ts
             if [[ "$expiry" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
@@ -724,8 +764,9 @@ enforce_quotas() {
             fi
         fi
         
-        # Check quota
-        if [ "$limit" -gt 0 ]; then
+        # Check quota only when the API is available so we never enforce on
+        # unmeasured (zero) traffic data.
+        if [ "$api_ok" -eq 1 ] && [ "$limit" -gt 0 ]; then
             local allowed=$limit
             if [ "$OVERAGE_PERCENT" -gt 0 ]; then
                 allowed=$((limit + (limit * OVERAGE_PERCENT / 100)))
@@ -819,6 +860,11 @@ dashboard() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "USER MANAGEMENT DASHBOARD"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if ! xray_api_reachable; then
+        echo "WARNING: Xray stats API unavailable — showing stored usage only."
+        echo "         Bandwidth quota enforcement is suspended until API is reachable."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
     printf "%-3s %-12s %-9s %-12s %-9s %-12s %-9s %-10s\n" "ID" "Username" "Protocol" "Limit" "Used" "Remaining" "Status" "Expiry"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     local users

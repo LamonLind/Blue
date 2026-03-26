@@ -5,7 +5,6 @@ CONFIG_PATH="/etc/xray/config.json"
 LOG_PATH="/var/log/xray/quota.log"
 BACKUP_DIR="/etc/xray/backup"
 QUOTA_CONF="/etc/xray/quota.conf"
-XRAY_API="127.0.0.1:10085"
 XRAY_BIN=""
 WEBHOOK_URL=""
 OVERAGE_PERCENT=0
@@ -125,7 +124,7 @@ validate_limit_gb() {
 # responds to a no-match query, 1 otherwise.
 xray_api_reachable() {
     [ -z "$XRAY_BIN" ] && return 1
-    "$XRAY_BIN" api statsquery --server="$XRAY_API" --pattern "^$" >/dev/null 2>&1
+    "$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "^$" >/dev/null 2>&1
 }
 
 # Parse bytes from a single xray api statsquery response.
@@ -177,7 +176,7 @@ query_user_stat() {
     [ -z "$XRAY_BIN" ] && return 1
     local escaped
     escaped=$(escape_xray_pattern "$user")
-    local args=( api statsquery --server="$XRAY_API"
+    local args=( api statsquery --server=127.0.0.1:10085
                  --pattern "^user>>>${escaped}>>>traffic>>>${direction}$" )
     [ "$reset" = "1" ] && args+=( --reset )
     local raw err

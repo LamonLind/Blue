@@ -196,18 +196,16 @@ escape_xray_pattern() {
 get_user_usage() {
     local username="$1"
     [ -z "$XRAY_BIN" ] && { echo "0"; return; }
+
     local total_bytes
-    total_bytes=$("$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "user>>" \
+    total_bytes=$("$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "user>>>" \
         | jq -r --arg user "$username" '
             .stat[]?
-            | select(.name | contains("user>>" + $user + ">>"))
-            | .value
+            | select(.name | contains("user>>>" + $user + ">>>"))
+            | (.value | tonumber? // 0)
         ' 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
-    if [ -z "$total_bytes" ]; then
-        echo "0"
-        return
-    fi
-    echo "$total_bytes"
+
+    echo "${total_bytes:-0}"
 }
 
 convert_to_mb() {

@@ -230,6 +230,7 @@ if [ -f /etc/xray/wildcard.conf ]; then
     NGINX_SERVER_NAME="*.${WILDCARD_BASE_DOMAIN} ${WILDCARD_BASE_DOMAIN}"
 elif [ -f /etc/xray/domain ]; then
     NGINX_SERVER_NAME="$(cat /etc/xray/domain)"
+    [ -z "$NGINX_SERVER_NAME" ] && NGINX_SERVER_NAME="127.0.0.1 localhost"
 else
     NGINX_SERVER_NAME="127.0.0.1 localhost"
 fi
@@ -745,6 +746,8 @@ cat <<EOF> /etc/xray/config.json
   "policy": {
     "levels": {
       "0": {
+        "handshake": 4,
+        "connIdle": 300,
         "statsUserDownlink": true,
         "statsUserUplink": true
       }

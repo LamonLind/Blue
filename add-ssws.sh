@@ -98,18 +98,23 @@ v2ray-menu
 
 cipher="aes-128-gcm"
 uuid=$(cat /proc/sys/kernel/random/uuid)
-read -p "Expired (days): " masaaktif
-exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
-
-# Bandwidth quota prompt (like 3x-ui)
-echo ""
-echo -e "${YELLOW}Bandwidth Quota Limit:${NC}"
-echo "Enter data quota limit (e.g., 10GB, 500MB, 1TB)"
-echo "Press Enter for unlimited"
-read -p "Quota: " quota_limit
-if [ -n "$quota_limit" ]; then
-    # Set quota using quota manager
-    /usr/bin/xray-quota-manager set "$user" "$quota_limit" 2>/dev/null
+while true; do
+    read -rp "Bandwidth limit (GB, 0=unlimited): " quota_gb
+    if [[ "$quota_gb" =~ ^[0-9]+$ ]] && [ "$quota_gb" -ge 0 ] && [ "$quota_gb" -le 10000 ]; then
+        break
+    fi
+    echo "Please enter a valid limit between 0 and 10000."
+done
+read -p "Expired (days or YYYY-MM-DD): " masaaktif
+if [[ "$masaaktif" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    exp="$masaaktif"
+else
+    exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
+fi
+if [ "$quota_gb" -eq 0 ]; then
+    quota_label="Unlimited"
+else
+    quota_label="${quota_gb} GB"
 fi
 
 sed -i '/#ssws$/a\#ssw '"$user $exp"'\
@@ -132,6 +137,14 @@ sslinkgrpc="ss://${shadowsocks_base64e}@${domain}:443?mode=gun&security=tls&encr
 nonsslinkgrpc="ss://${shadowsocks_base64e}@${domain}:80?mode=gun&security=none&encryption=none&type=grpc&serviceName=ss-grpc&sni=bug.com#${user}"
 
 systemctl restart xray
+if command -v xray-quota-manager >/dev/null 2>&1; then
+    configs_json=$(jq -nc \
+        --arg ws_tls "$sslinkws" \
+        --arg ws_ntls "$nonsslinkws" \
+        --arg grpc "$sslinkgrpc" \
+        '{ws_tls,ws_ntls,grpc}')
+    xray-quota-manager register "$user" "ss" "$uuid" "$exp" "$quota_gb" "$configs_json" >/dev/null 2>&1
+fi
 #buatshadowsocks custom
 rm -rf /tmp/log
 rm -rf /tmp/log1
@@ -375,6 +388,8 @@ echo -e "Link GRPC None TLS : ${nonsslinkgrpc}" | tee -a /etc/log-create-user.lo
 echo -e "Link JSON WS : http://${domain}:81/sodosokws-$user.txt" | tee -a /etc/log-create-user.log
         echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo -e "Link JSON gRPC : http://${domain}:81/sodosokgrpc-$user.txt" | tee -a /etc/log-create-user.log
+        echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+echo -e "Bandwidth : ${quota_label} (0 GB used)" | tee -a /etc/log-create-user.log
         echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
         echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"

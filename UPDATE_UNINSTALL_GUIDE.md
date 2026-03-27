@@ -13,7 +13,6 @@ The update script allows you to update individual components or all scripts with
   - SSH/WS Scripts
   - XRAY Scripts (VMESS, VLESS, Trojan, Shadowsocks)
   - Menu Scripts
-  - Bandwidth Management Scripts
   - System Utilities
 - **Version Check**: Check current version against the latest available version
 - **Progress Tracking**: Visual feedback for each script being updated
@@ -40,7 +39,6 @@ This is the recommended option that updates all components:
 - Account creation scripts (SSH, VMESS, VLESS, Trojan, Shadowsocks)
 - Menu scripts (all protocol menus)
 - System utilities (restart, autoreboot, clearlog, etc.)
-- Monitoring tools (cek-trafik, etc.)
 
 #### Update Specific Components
 
@@ -107,14 +105,12 @@ The uninstall process removes:
    - Nginx (VPN configurations only)
    - Stunnel5
    - Dropbear
-   - Bandwidth monitoring services
    - Host capture service
 
 2. **Scripts** (removed from /usr/bin):
    - All account creation scripts
    - All menu scripts
    - All management utilities
-   - Bandwidth monitoring tools
    - System utilities
 
 3. **Configuration Files**:
@@ -125,7 +121,6 @@ The uninstall process removes:
 
 4. **Systemd Service Files**:
    - All XRAY service files
-   - Bandwidth monitoring services
    - Host capture service
 
 5. **Cron Jobs**:
@@ -217,8 +212,7 @@ menu
 1. SSH/WS Scripts
 2. XRAY Scripts (VMESS, VLESS, Trojan, Shadowsocks)
 3. Menu Scripts
-4. Bandwidth Management Scripts
-5. System Utilities
+4. System Utilities
 
 ---
 

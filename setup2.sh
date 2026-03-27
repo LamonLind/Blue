@@ -185,7 +185,6 @@ wget -q -O /usr/bin/restart "https://raw.githubusercontent.com/LamonLind/Blue/ma
 wget -q -O /usr/bin/tendang "https://raw.githubusercontent.com/LamonLind/Blue/main/tendang.sh"
 wget -q -O /usr/bin/clearlog "https://raw.githubusercontent.com/LamonLind/Blue/main/clearlog.sh"
 wget -q -O /usr/bin/running "https://raw.githubusercontent.com/LamonLind/Blue/main/running.sh"
-wget -q -O /usr/bin/cek-trafik "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-trafik.sh"
 wget -q -O /usr/bin/cek-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/speedtes_cli.py"
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
@@ -196,6 +195,9 @@ wget -q -O /usr/bin/menu-ss "https://raw.githubusercontent.com/LamonLind/Blue/ma
 wget -q -O /usr/bin/menu-trojan "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trojan.sh"
 wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-trgo.sh"
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
+wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
+wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
+wget -q -O /usr/local/bin/xray_quota_monitor.sh "https://raw.githubusercontent.com/LamonLind/Blue/main/xray_quota_monitor.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
 wget -q -O /usr/bin/bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/bckpbot.sh"
@@ -222,7 +224,6 @@ chmod +x /usr/bin/restart
 chmod +x /usr/bin/tendang
 chmod +x /usr/bin/clearlog
 chmod +x /usr/bin/running
-chmod +x /usr/bin/cek-trafik
 chmod +x /usr/bin/cek-speed
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
@@ -233,6 +234,7 @@ chmod +x /usr/bin/menu-socks
 chmod +x /usr/bin/menu-trojan
 chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
+chmod +x /usr/bin/menu-bandwidth
 chmod +x /usr/bin/menu-bckp
 chmod +x /usr/bin/menu
 chmod +x /usr/bin/bckp
@@ -242,8 +244,30 @@ chmod +x /usr/bin/update
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr
+chmod +x /usr/bin/xray-quota-manager
+chmod +x /usr/local/bin/xray_quota_monitor.sh
 #chmod +x /usr/bin/del-xrays
 #chmod +x /usr/bin/user-xrays
+
+cat > /etc/systemd/system/xray-quota-monitor.service <<-END
+[Unit]
+Description=Xray Bandwidth Quota Monitor
+After=xray.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/xray_quota_monitor.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+END
+
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable xray-quota-monitor >/dev/null 2>&1
+systemctl start xray-quota-monitor >/dev/null 2>&1
 
 
 # > install gotop

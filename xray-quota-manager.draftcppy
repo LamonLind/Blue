@@ -193,24 +193,19 @@ escape_xray_pattern() {
     echo "$input" | sed 's/[][(){}.^$*+?|\\]/\\&/g'
 }
 
-# FIXED: Get total usage for a user by summing both uplink and downlink
-# This function should only be used for display purposes, not for quota enforcement
 get_user_usage() {
     local username="$1"
     [ -z "$XRAY_BIN" ] && { echo "0"; return; }
 
-    # Query both uplink and downlink separately and sum them
-    local uplink downlink
-    uplink=$(query_user_stat "$username" "uplink" "0")
-    downlink=$(query_user_stat "$username" "downlink" "0")
-    
-    # If either query fails, return 0
-    if [ -z "$uplink" ] || [ -z "$downlink" ]; then
-        echo "0"
-        return
-    fi
-    
-    echo $((uplink + downlink))
+    local total_bytes
+    total_bytes=$("$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "user>>>" \
+        | jq -r --arg user "$username" '
+            .stat[]?
+            | select(.name | contains("user>>>" + $user + ">>>"))
+            | (.value | tonumber? // 0)
+        ' 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+
+    echo "${total_bytes:-0}"
 }
 
 convert_to_mb() {
@@ -681,7 +676,6 @@ ensure_xray_stats_enabled() {
     fi
 }
 
-# FIXED: Quota enforcement now properly measures usage without double counting
 enforce_quotas() {
     local now_ts
     now_ts=$(date -u +%s)
@@ -730,40 +724,30 @@ enforce_quotas() {
             fi
         fi
         
-        # Bandwidth enforcement requires live API stats
-        # FIXED: Query both uplink and downlink separately and sum them
+        # Bandwidth enforcement requires live API stats — never use stored values.
         if [ "$api_ok" -eq 1 ] && [ "$limit" -gt 0 ]; then
             local uplink downlink used
-            
-            # Get uplink usage
             if ! uplink=$(query_user_stat "$user" "uplink" "0"); then
                 log_msg "WARN" "Xray stats unavailable for ${user}; skipping bandwidth enforcement."
                 continue
             fi
-            
-            # Get downlink usage
-            if ! downlink=$(query_user_stat "$user" "downlink" "0"); then
-                log_msg "WARN" "Xray stats unavailable for ${user} downlink; skipping bandwidth enforcement."
-                continue
-            fi
-            
-            # Sum them properly - no double counting
+            downlink=$(query_user_stat "$user" "downlink" "0") || downlink=0
             used=$((uplink + downlink))
-            
+
             local allowed=$limit
             if [ "$OVERAGE_PERCENT" -gt 0 ]; then
                 allowed=$((limit + (limit * OVERAGE_PERCENT / 100)))
             fi
             
-            # Log warning when approaching limit (only log if used is measurable)
-            if [ "$used" -ge "$limit" ] && [ "$used" -lt "$allowed" ] && [ "$limit" -gt 0 ]; then
+            # Log warning when approaching limit
+            if [ "$used" -ge "$limit" ] && [ "$used" -lt "$allowed" ]; then
                 local percent=$((used * 100 / limit))
-                log_msg "WARN" "User ${user} exceeded ${percent}% of quota (used: ${used}, limit: ${limit})."
+                log_msg "WARN" "User ${user} exceeded ${percent}% of quota (${used}/${limit})."
             fi
             
             # Disable when exceeding allowed limit
-            if [ "$used" -ge "$allowed" ] && [ "$allowed" -gt 0 ]; then
-                log_msg "INFO" "User ${user} exceeded quota limit (used: ${used}, limit: ${limit}, allowed: ${allowed}). Disabling user."
+            if [ "$used" -ge "$allowed" ]; then
+                log_msg "INFO" "User ${user} exceeded quota limit (${used}/${limit})."
                 disable_user "$user" "quota"
                 send_webhook "$user" "$used" "$limit"
             fi

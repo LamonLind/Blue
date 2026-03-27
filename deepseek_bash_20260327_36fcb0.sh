@@ -1,0 +1,1097 @@
+#!/usr/bin/env bash
+
+DB_PATH="/etc/xray/user-quotas.json"
+CONFIG_PATH="/etc/xray/config.json"
+LOG_PATH="/var/log/xray/quota.log"
+BACKUP_DIR="/etc/xray/backup"
+QUOTA_CONF="/etc/xray/quota.conf"
+XRAY_BIN=""
+WEBHOOK_URL=""
+OVERAGE_PERCENT=0
+
+log_msg() {
+    local level="$1"
+    local message="$2"
+    mkdir -p "$(dirname "$LOG_PATH")" 2>/dev/null
+    printf "%s [%s] %s\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$level" "$message" >> "$LOG_PATH"
+}
+
+load_quota_config() {
+    if [ -f "$QUOTA_CONF" ]; then
+        # shellcheck disable=SC1090
+        source "$QUOTA_CONF"
+    fi
+}
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Missing required command: $1"
+        exit 1
+    }
+}
+
+resolve_xray_bin() {
+    if command -v xray >/dev/null 2>&1; then
+        XRAY_BIN="$(command -v xray)"
+    elif [ -x /usr/local/bin/xray ]; then
+        XRAY_BIN="/usr/local/bin/xray"
+    elif [ -x /usr/bin/xray ]; then
+        XRAY_BIN="/usr/bin/xray"
+    else
+        XRAY_BIN=""
+        log_msg "WARN" "Xray executable not found; usage stats unavailable."
+    fi
+}
+
+db_init() {
+    mkdir -p "$(dirname "$DB_PATH")" "$BACKUP_DIR" 2>/dev/null
+    if [ ! -f "$DB_PATH" ]; then
+        echo '{"users":[]}' > "$DB_PATH"
+    fi
+    if ! jq empty "$DB_PATH" >/dev/null 2>&1; then
+        log_msg "WARN" "Quota DB invalid; rebuilding from config."
+        rebuild_db
+    fi
+    sync_missing_users
+    ensure_xray_stats_enabled
+}
+
+backup_db() {
+    mkdir -p "$BACKUP_DIR" 2>/dev/null
+    cp "$DB_PATH" "$BACKUP_DIR/user-quotas-$(date -u +"%Y%m%dT%H%M%SZ").json" 2>/dev/null
+}
+
+backup_config() {
+    mkdir -p "$BACKUP_DIR" 2>/dev/null
+    if [ -f "$CONFIG_PATH" ]; then
+        cp "$CONFIG_PATH" "$BACKUP_DIR/config-$(date -u +"%Y%m%dT%H%M%SZ").json" 2>/dev/null
+    fi
+}
+
+gb_to_bytes() {
+    local gb="$1"
+    echo $((gb * 1024 * 1024 * 1024))
+}
+
+bytes_to_gb() {
+    local bytes="$1"
+    if [ "$bytes" -le 0 ]; then
+        echo "0.0"
+        return
+    fi
+    echo "scale=1; $bytes/1073741824" | bc
+}
+
+bytes_to_mb() {
+    local bytes="$1"
+    if [ "$bytes" -le 0 ]; then
+        echo "0.0"
+        return
+    fi
+    echo "scale=1; $bytes/1048576" | bc
+}
+
+format_usage_value() {
+    local bytes="$1"
+    if [ "$bytes" -lt 1073741824 ]; then
+        printf "%s MB" "$(bytes_to_mb "$bytes")"
+    else
+        printf "%s GB" "$(bytes_to_gb "$bytes")"
+    fi
+}
+
+format_limit() {
+    local limit_bytes="$1"
+    if [ "$limit_bytes" -le 0 ]; then
+        echo "Unlimited"
+    else
+        printf "%s GB" "$(bytes_to_gb "$limit_bytes")"
+    fi
+}
+
+validate_limit_gb() {
+    local limit="$1"
+    if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    if [ "$limit" -gt 10000 ]; then
+        return 1
+    fi
+    return 0
+}
+
+# Verify the Xray gRPC stats API is reachable.  Returns 0 when the API
+# responds to a no-match query, 1 otherwise.
+xray_api_reachable() {
+    [ -z "$XRAY_BIN" ] && return 1
+    "$XRAY_BIN" api statsquery --server=127.0.0.1:10085 --pattern "^$" >/dev/null 2>&1
+}
+
+# Parse bytes from a single xray api statsquery response.
+# Handles proto3 JSON (int64 may arrive as a quoted string) and text/proto format.
+# When a string value is not a valid integer, tonumber? returns null and the //0
+# guard converts it to 0; the awk fallback below then provides a second parse
+# attempt using the text/proto representation of the same output.
+parse_stat_value() {
+    local raw="$1"
+    local val
+    # JSON path: .value may be a JSON number or a proto3-encoded quoted string.
+    val=$(printf '%s' "$raw" | jq -r '
+        .stat // [] |
+        map(.value | if type == "number" then .
+                     elif type == "string" then tonumber? // 0
+                     else 0 end) |
+        add // 0
+    ' 2>/dev/null)
+    if [[ "$val" =~ ^[0-9]+$ ]]; then
+        echo "$val"
+        return 0
+    fi
+    # Text/proto format fallback: match bare digits after "value:"
+    val=$(printf '%s' "$raw" | awk '
+        BEGIN { total=0 }
+        {
+            line=$0
+            while (match(line, /value:[[:space:]]*[0-9]+/)) {
+                seg=substr(line, RSTART, RLENGTH)
+                sub(/value:[[:space:]]*/, "", seg)
+                total+=seg
+                line=substr(line, RSTART + RLENGTH)
+            }
+        }
+        END { print total+0 }
+    ')
+    echo "${val:-0}"
+}
+
+# Query traffic bytes for one user in one direction.
+# $1: username (must match the email field set in xray config)
+# $2: direction — "uplink" or "downlink"
+# $3: "1" to atomically drain (read+reset) the counter, "0" to peek only
+# Prints bytes on stdout; returns 1 if the API call fails.
+query_user_stat() {
+    local user="$1"
+    local direction="$2"
+    local reset="${3:-0}"
+    [ -z "$XRAY_BIN" ] && return 1
+    local escaped
+    escaped=$(escape_xray_pattern "$user")
+    local args=( api statsquery --server=127.0.0.1:10085
+                 --pattern "^user>>>${escaped}>>>traffic>>>${direction}$" )
+    [ "$reset" = "1" ] && args+=( --reset )
+    local raw err
+    if ! raw=$("$XRAY_BIN" "${args[@]}" 2>/tmp/xray_stat_err); then
+        err=$(cat /tmp/xray_stat_err 2>/dev/null)
+        log_msg "WARN" "Xray statsquery failed for ${user}/${direction}: ${err:-unknown error}"
+        return 1
+    fi
+    parse_stat_value "$raw"
+}
+
+escape_xray_pattern() {
+    local input="$1"
+    echo "$input" | sed 's/[][(){}.^$*+?|\\]/\\&/g'
+}
+
+# FIXED: Get total usage for a user by summing both uplink and downlink
+# This function should only be used for display purposes, not for quota enforcement
+get_user_usage() {
+    local username="$1"
+    [ -z "$XRAY_BIN" ] && { echo "0"; return; }
+
+    # Query both uplink and downlink separately and sum them
+    local uplink downlink
+    uplink=$(query_user_stat "$username" "uplink" "0")
+    downlink=$(query_user_stat "$username" "downlink" "0")
+    
+    # If either query fails, return 0
+    if [ -z "$uplink" ] || [ -z "$downlink" ]; then
+        echo "0"
+        return
+    fi
+    
+    echo $((uplink + downlink))
+}
+
+convert_to_mb() {
+    local bytes="$1"
+    echo "scale=2; $bytes/1024/1024" | bc
+}
+
+register_account() {
+    local user="$1"
+    local protocol="$2"
+    local uuid="$3"
+    local expiry="$4"
+    local limit_gb="$5"
+    local configs_json="${6:-}"
+    if [ -z "$configs_json" ]; then
+        configs_json='{}'
+    fi
+    if ! validate_limit_gb "$limit_gb"; then
+        echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
+        return 1
+    fi
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local limit_bytes
+    if [ "$limit_gb" -eq 0 ]; then
+        limit_bytes=0
+    else
+        limit_bytes=$(gb_to_bytes "$limit_gb")
+    fi
+    if jq -e --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH" >/dev/null; then
+        local tmp_existing
+        tmp_existing=$(mktemp)
+        backup_db
+        jq --arg user "$user" \
+            --arg protocol "$protocol" \
+            --arg uuid "$uuid" \
+            --arg expiry "$expiry" \
+            --arg created "$now" \
+            --argjson limit_bytes "$limit_bytes" \
+            --argjson configs "$configs_json" '
+            (.users[] | select(.username==$user)) |= (
+                .id = $uuid
+                | .email = $user
+                | .protocol = $protocol
+                | .expiry = $expiry
+                | .configs = $configs
+                | .created |= (if . == null or . == "" then $created else . end)
+                | .bandwidth.limit_bytes = $limit_bytes
+                | .bandwidth.used_bytes |= (. // 0)
+                | .bandwidth.last_reset |= (if . == null or . == "" then $created else . end)
+                | .status |= (if . == null or . == "" then "active" else . end)
+            )
+        ' "$DB_PATH" > "$tmp_existing" && mv "$tmp_existing" "$DB_PATH"
+        return 0
+    fi
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" \
+        --arg protocol "$protocol" \
+        --arg uuid "$uuid" \
+        --arg expiry "$expiry" \
+        --arg created "$now" \
+        --argjson limit_bytes "$limit_bytes" \
+        --argjson configs "$configs_json" \
+        '.users += [{
+            id: $uuid,
+            username: $user,
+            email: $user,
+            protocol: $protocol,
+            created: $created,
+            expiry: $expiry,
+            bandwidth: {
+                limit_bytes: $limit_bytes,
+                used_bytes: 0,
+                last_reset: $created
+            },
+            status: "active",
+            configs: $configs
+        }]' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+set_expiry() {
+    local user="$1"
+    local expiry="$2"
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --arg expiry "$expiry" '
+        (.users[] | select(.username==$user) | .expiry) = $expiry
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+set_limit() {
+    local user="$1"
+    local limit_gb="$2"
+    if ! validate_limit_gb "$limit_gb"; then
+        echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
+        return 1
+    fi
+    local limit_bytes
+    if [ "$limit_gb" -eq 0 ]; then
+        limit_bytes=0
+    else
+        limit_bytes=$(gb_to_bytes "$limit_gb")
+    fi
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --argjson limit_bytes "$limit_bytes" '
+        (.users[] | select(.username==$user) | .bandwidth.limit_bytes) = $limit_bytes
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+extend_limit() {
+    local user="$1"
+    local extra_gb="$2"
+    if ! validate_limit_gb "$extra_gb"; then
+        echo "Invalid bandwidth limit. Please provide a value between 0 and 10000 GB."
+        return 1
+    fi
+    local limit_bytes
+    limit_bytes=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .bandwidth.limit_bytes' "$DB_PATH")
+    if [ "$limit_bytes" -le 0 ]; then
+        echo "User has unlimited bandwidth. Extend applies only to finite quotas; use set-limit to define one."
+        return 1
+    fi
+    local extra_bytes
+    extra_bytes=$(gb_to_bytes "$extra_gb")
+    local new_limit=$((limit_bytes + extra_bytes))
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --argjson new_limit "$new_limit" '
+        (.users[] | select(.username==$user) | .bandwidth.limit_bytes) = $new_limit
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+remove_user_from_config() {
+    local user="$1"
+    local protocol="$2"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    backup_config
+    case "$protocol" in
+        vless)
+            sed -i "/^#vlsg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vlsx $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vls $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        vmess)
+            sed -i "/^#vmsg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vmsx $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#vms $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^### $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        trojan)
+            sed -i "/^#trg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#tr $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        ss)
+            sed -i "/^#sswg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#ssw $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        socks)
+            sed -i "/^#ssg $user /,/^},{/d" "$CONFIG_PATH"
+            sed -i "/^#ss $user /,/^},{/d" "$CONFIG_PATH"
+            ;;
+        *)
+            return
+            ;;
+    esac
+    systemctl restart xray >/dev/null 2>&1
+}
+
+add_user_to_config() {
+    local user="$1"
+    local protocol="$2"
+    local uuid="$3"
+    local expiry="$4"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    case "$protocol" in
+        vless)
+            if grep -q "^#vls $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#vless$/a\#vls '"$user $expiry"'\
+},{"id": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vlessgrpc$/a\#vlsg '"$user $expiry"'\
+},{"id": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vlessxhttp$/a\#vlsx '"$user $expiry"'\
+},{"id": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        vmess)
+            if grep -q "^#vms $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#vmess$/a\#vms '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmessworry$/a\### '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmesskuota$/a\### '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmessgrpc$/a\#vmsg '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#vmexxhttp$/a\#vmsx '"$user $expiry"'\
+},{"id": "'"$uuid"'","alterId": '"0"',"email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        trojan)
+            if grep -q "^#tr $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#trojanws$/a\#tr '"$user $expiry"'\
+},{"password": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#trojangrpc$/a\#trg '"$user $expiry"'\
+},{"password": "'"$uuid"'","email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        ss)
+            if grep -q "^#ssw $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#ssws$/a\#ssw '"$user $expiry"'\
+},{"password": "'"$uuid"'","method": "aes-128-gcm","email": "'"$user"'"}' "$CONFIG_PATH"
+            sed -i '/#ssgrpc$/a\#sswg '"$user $expiry"'\
+},{"password": "'"$uuid"'","method": "aes-128-gcm","email": "'"$user"'"}' "$CONFIG_PATH"
+            ;;
+        socks)
+            if grep -q "^#ss $user " "$CONFIG_PATH"; then
+                return
+            fi
+            backup_config
+            sed -i '/#socksws$/a\#ss '"$user $expiry"'\
+},{"user": "'"$user"'","pass": "'"$uuid"'"}' "$CONFIG_PATH"
+            sed -i '/#socksgrpc$/a\#ssg '"$user $expiry"'\
+},{"user": "'"$user"'","pass": "'"$uuid"'"}' "$CONFIG_PATH"
+            ;;
+        *)
+            return
+            ;;
+    esac
+    systemctl restart xray >/dev/null 2>&1
+}
+
+disable_user() {
+    local user="$1"
+    local reason="${2:-quota}"
+    local protocol
+    protocol=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .protocol' "$DB_PATH")
+    if [ -z "$protocol" ] || [ "$protocol" = "null" ]; then
+        return 1
+    fi
+    remove_user_from_config "$user" "$protocol"
+    local status="disabled"
+    if [ "$reason" = "expired" ]; then
+        status="expired"
+    fi
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --arg status "$status" --arg reason "$reason" '
+        (.users[] | select(.username==$user) | .status) = $status
+        | (.users[] | select(.username==$user) | .disabled_reason) = $reason
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    log_msg "INFO" "User ${user} disabled (reason: ${reason})."
+}
+
+enable_user() {
+    local user="$1"
+    local protocol uuid expiry
+    protocol=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .protocol' "$DB_PATH")
+    uuid=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .id' "$DB_PATH")
+    expiry=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .expiry' "$DB_PATH")
+    if [ -z "$protocol" ] || [ "$protocol" = "null" ]; then
+        return 1
+    fi
+    add_user_to_config "$user" "$protocol" "$uuid" "$expiry"
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" '
+        (.users[] | select(.username==$user) | .status) = "active"
+        | (.users[] | select(.username==$user) | .disabled_reason) = null
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    log_msg "INFO" "User ${user} enabled."
+}
+
+reset_bandwidth() {
+    local user="$1"
+    # Drain any live Xray stats for this user so the counter is clean after reset
+    query_user_stat "$user" "uplink" "1" >/dev/null 2>&1 || true
+    query_user_stat "$user" "downlink" "1" >/dev/null 2>&1 || true
+    # Reset stored usage to 0
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" --arg now "$now" '
+        (.users[] | select(.username==$user) | .bandwidth.used_bytes) = 0
+        | (.users[] | select(.username==$user) | .bandwidth.last_reset) = $now
+        | (.users[] | select(.username==$user) | .status) = "active"
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    enable_user "$user" >/dev/null 2>&1
+    log_msg "INFO" "Bandwidth reset for ${user}."
+}
+
+delete_user() {
+    local user="$1"
+    local protocol
+    protocol=$(jq -r --arg user "$user" '.users[]? | select(.username==$user) | .protocol' "$DB_PATH")
+    if [ -z "$protocol" ] || [ "$protocol" = "null" ]; then
+        return 1
+    fi
+    remove_user_from_config "$user" "$protocol"
+    case "$protocol" in
+        vless)
+            rm -f "/home/vps/public_html/vless-${user}.txt"
+            ;;
+        vmess)
+            rm -f "/home/vps/public_html/vmess-${user}.txt"
+            ;;
+        trojan)
+            rm -f "/home/vps/public_html/trojan-${user}.txt"
+            ;;
+        ss)
+            rm -f "/home/vps/public_html/sodosokws-${user}.txt" "/home/vps/public_html/sodosokgrpc-${user}.txt"
+            ;;
+        socks)
+            rm -f "/home/vps/public_html/socksws-${user}.txt" "/home/vps/public_html/socksgrpc-${user}.txt"
+            ;;
+    esac
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" '
+        .users |= map(select(.username!=$user))
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+    log_msg "INFO" "User ${user} deleted."
+}
+
+remove_user_record() {
+    local user="$1"
+    local tmp
+    tmp=$(mktemp)
+    backup_db
+    jq --arg user "$user" '
+        .users |= map(select(.username!=$user))
+    ' "$DB_PATH" > "$tmp" && mv "$tmp" "$DB_PATH"
+}
+
+send_webhook() {
+    local user="$1"
+    local used_bytes="$2"
+    local limit_bytes="$3"
+    if [ -z "$WEBHOOK_URL" ]; then
+        return
+    fi
+    curl -s -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"user\":\"${user}\",\"used_bytes\":${used_bytes},\"limit_bytes\":${limit_bytes}}" >/dev/null 2>&1 || true
+}
+
+# Verify that Xray config.json has all components required for per-user traffic
+# statistics, and add any that are missing.  This self-heals deployments where
+# the API or policy blocks were accidentally removed.
+ensure_xray_stats_enabled() {
+    if [ ! -f "$CONFIG_PATH" ]; then
+        log_msg "WARN" "Xray config not found at ${CONFIG_PATH}; skipping stats check."
+        return
+    fi
+    if ! jq empty "$CONFIG_PATH" >/dev/null 2>&1; then
+        log_msg "WARN" "Xray config is not valid JSON; skipping stats check."
+        return
+    fi
+
+    local changed=0
+    local tmp
+    tmp=$(mktemp)
+    cp "$CONFIG_PATH" "$tmp"
+
+    # 1. Ensure "stats" key exists
+    if ! jq -e '.stats' "$tmp" >/dev/null 2>&1; then
+        jq '. + {"stats": {}}' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing 'stats' block to Xray config."
+    fi
+
+    # 2. Ensure "api" block with StatsService exists
+    if ! jq -e '.api.services[]? | select(. == "StatsService")' "$tmp" >/dev/null 2>&1; then
+        jq '.api.services += ["StatsService"] | .api.tag //= "api"' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing 'api' StatsService block to Xray config."
+    fi
+
+    # 3. Ensure per-user uplink/downlink policy flags
+    local need_policy=0
+    if ! jq -e '.policy.levels["0"].statsUserUplink == true' "$tmp" >/dev/null 2>&1; then
+        need_policy=1
+    fi
+    if ! jq -e '.policy.levels["0"].statsUserDownlink == true' "$tmp" >/dev/null 2>&1; then
+        need_policy=1
+    fi
+    if [ "$need_policy" -eq 1 ]; then
+        jq '
+            .policy.levels["0"].statsUserUplink = true
+            | .policy.levels["0"].statsUserDownlink = true
+        ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Enabled statsUserUplink/Downlink in Xray policy."
+    fi
+
+    # 4. Ensure dokodemo-door inbound listening on 127.0.0.1:10085 with tag "api"
+    if ! jq -e '.inbounds[]? | select(.tag == "api" and .protocol == "dokodemo-door")' "$tmp" >/dev/null 2>&1; then
+        jq '.inbounds += [{
+            "listen": "127.0.0.1",
+            "port": 10085,
+            "protocol": "dokodemo-door",
+            "settings": {"address": "127.0.0.1"},
+            "tag": "api"
+        }]' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing dokodemo-door API inbound to Xray config."
+    fi
+
+    # 5. Ensure routing rule that directs inbound api tag to api outbound
+    if ! jq -e '.routing.rules[]? | select(.inboundTag[]? == "api")' "$tmp" >/dev/null 2>&1; then
+        jq '
+            if .routing == null then .routing = {"rules": []} else . end
+            | .routing.rules += [{"type": "field", "inboundTag": ["api"], "outboundTag": "api"}]
+        ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Added missing API routing rule to Xray config."
+    fi
+
+    # 6. Ensure system-level inbound stats are enabled under policy.system
+    local need_system=0
+    if ! jq -e '.policy.system.statsInboundUplink == true' "$tmp" >/dev/null 2>&1; then
+        need_system=1
+    fi
+    if ! jq -e '.policy.system.statsInboundDownlink == true' "$tmp" >/dev/null 2>&1; then
+        need_system=1
+    fi
+    if [ "$need_system" -eq 1 ]; then
+        jq '
+            .policy.system.statsInboundUplink = true
+            | .policy.system.statsInboundDownlink = true
+        ' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+        changed=1
+        log_msg "INFO" "Enabled statsInboundUplink/Downlink in Xray policy.system."
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+        backup_config
+        mv "$tmp" "$CONFIG_PATH"
+        log_msg "INFO" "Xray config updated; restarting xray."
+        systemctl restart xray >/dev/null 2>&1 || true
+        # Allow Xray time to fully initialize before statsquery is called
+        sleep 2
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# FIXED: Quota enforcement now properly measures usage without double counting
+enforce_quotas() {
+    local now_ts
+    now_ts=$(date -u +%s)
+    backup_db
+
+    ensure_xray_stats_enabled
+
+    # Verify the Xray stats API is responding before querying per-user counters.
+    # When the API is unreachable we must NOT enforce bandwidth quotas — that
+    # would falsely disable users whose real usage has not been measured.
+    # Expiry checks are independent of the API and always run.
+    local api_ok=1
+    if ! xray_api_reachable; then
+        log_msg "WARN" "Xray stats API unreachable; bandwidth quota enforcement skipped this cycle."
+        api_ok=0
+    fi
+
+    # Get all active users
+    local users
+    users=$(jq -r '.users[]? | select(.status=="active") | .username' "$DB_PATH")
+    
+    for user in $users; do
+        # Get current record
+        local record
+        record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
+        if [ -z "$record" ]; then
+            continue
+        fi
+        
+        local expiry limit
+        expiry=$(echo "$record" | jq -r '.expiry')
+        limit=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
+        
+        # Check expiry (independent of API availability)
+        if [ -n "$expiry" ] && [ "$expiry" != "null" ]; then
+            local expiry_ts
+            if [[ "$expiry" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                expiry_ts=$(date -d "${expiry} 23:59:59" +%s 2>/dev/null || echo 0)
+            else
+                expiry_ts=$(date -d "$expiry" +%s 2>/dev/null || echo 0)
+            fi
+            if [ "$expiry_ts" -gt 0 ] && [ "$now_ts" -ge "$expiry_ts" ]; then
+                log_msg "INFO" "User ${user} expired on ${expiry}"
+                disable_user "$user" "expired"
+                continue
+            fi
+        fi
+        
+        # Bandwidth enforcement requires live API stats
+        # FIXED: Query both uplink and downlink separately and sum them
+        if [ "$api_ok" -eq 1 ] && [ "$limit" -gt 0 ]; then
+            local uplink downlink used
+            
+            # Get uplink usage
+            if ! uplink=$(query_user_stat "$user" "uplink" "0"); then
+                log_msg "WARN" "Xray stats unavailable for ${user}; skipping bandwidth enforcement."
+                continue
+            fi
+            
+            # Get downlink usage
+            if ! downlink=$(query_user_stat "$user" "downlink" "0"); then
+                log_msg "WARN" "Xray stats unavailable for ${user} downlink; skipping bandwidth enforcement."
+                continue
+            fi
+            
+            # Sum them properly - no double counting
+            used=$((uplink + downlink))
+            
+            local allowed=$limit
+            if [ "$OVERAGE_PERCENT" -gt 0 ]; then
+                allowed=$((limit + (limit * OVERAGE_PERCENT / 100)))
+            fi
+            
+            # Log warning when approaching limit (only log if used is measurable)
+            if [ "$used" -ge "$limit" ] && [ "$used" -lt "$allowed" ] && [ "$limit" -gt 0 ]; then
+                local percent=$((used * 100 / limit))
+                log_msg "WARN" "User ${user} exceeded ${percent}% of quota (used: ${used}, limit: ${limit})."
+            fi
+            
+            # Disable when exceeding allowed limit
+            if [ "$used" -ge "$allowed" ] && [ "$allowed" -gt 0 ]; then
+                log_msg "INFO" "User ${user} exceeded quota limit (used: ${used}, limit: ${limit}, allowed: ${allowed}). Disabling user."
+                disable_user "$user" "quota"
+                send_webhook "$user" "$used" "$limit"
+            fi
+        fi
+    done
+    
+    log_msg "INFO" "Quota enforcement completed for $(echo "$users" | wc -w) active users"
+}
+
+usage_bar() {
+    local used="$1"
+    local limit="$2"
+    local width=20
+    if [ "$limit" -le 0 ]; then
+        local bar=""
+        for ((i=0; i<width; i++)); do
+            bar+="█"
+        done
+        printf "[%s]" "$bar"
+        return
+    fi
+    local percent=$((used * 100 / limit))
+    if [ "$percent" -gt 100 ]; then
+        percent=100
+    fi
+    local filled=$((percent * width / 100))
+    local empty=$((width - filled))
+    local bar=""
+    for ((i=0; i<filled; i++)); do
+        bar+="█"
+    done
+    for ((i=0; i<empty; i++)); do
+        bar+="░"
+    done
+    printf "[%s]" "$bar"
+}
+
+show_user() {
+    local user="$1"
+    local record
+    record=$(jq -r --arg user "$user" '.users[]? | select(.username==$user)' "$DB_PATH")
+    if [ -z "$record" ]; then
+        echo "User not found."
+        return 1
+    fi
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "USER DETAILS"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Username    : $(echo "$record" | jq -r '.username')"
+    echo "Protocol    : $(echo "$record" | jq -r '.protocol' | tr '[:lower:]' '[:upper:]')"
+    echo "Expiry      : $(echo "$record" | jq -r '.expiry')"
+    echo "Status      : $(echo "$record" | jq -r '.status' | tr '[:lower:]' '[:upper:]')"
+    local limit_bytes
+    limit_bytes=$(echo "$record" | jq -r '.bandwidth.limit_bytes // 0')
+    echo "Bandwidth   : $(format_limit "$limit_bytes")"
+    local bytes used_mb
+    bytes=$(get_user_usage "$user")
+    used_mb=$(convert_to_mb "$bytes")
+    local remaining_label
+    if [ "$limit_bytes" -le 0 ]; then
+        remaining_label="∞"
+    else
+        local remaining_bytes=$((limit_bytes - bytes))
+        if [ "$remaining_bytes" -lt 0 ]; then remaining_bytes=0; fi
+        remaining_label="$(bytes_to_gb "$remaining_bytes") GB"
+    fi
+    local percent=0
+    if [ "$limit_bytes" -gt 0 ]; then
+        percent=$((bytes * 100 / limit_bytes))
+        if [ "$percent" -gt 100 ]; then percent=100; fi
+    fi
+    echo "Used        : ${used_mb} MB"
+    echo "Remaining   : ${remaining_label}"
+    echo "Usage       : $(usage_bar "$bytes" "$limit_bytes") ${used_mb} MB / $(format_limit "$limit_bytes") (${percent}%)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+dashboard() {
+    local status_filter="${1:-all}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "USER MANAGEMENT DASHBOARD"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if ! xray_api_reachable; then
+        echo "WARNING: Tracking Not Working — Xray stats API unavailable."
+        echo "         Bandwidth quota enforcement is suspended until API is reachable."
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
+    printf "%-3s %-12s %-9s %-12s %-22s %-22s %-9s %-10s\n" "ID" "Username" "Protocol" "Limit" "Used" "Remaining" "Status" "Expiry"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    local users
+    if [ "$status_filter" = "all" ]; then
+        users=$(jq -r '.users[]? | [.username,.protocol,.bandwidth.limit_bytes,.expiry,.status] | @tsv' "$DB_PATH")
+    else
+        users=$(jq -r --arg status "$status_filter" '.users[]? | select(.status==$status) | [.username,.protocol,.bandwidth.limit_bytes,.expiry,.status] | @tsv' "$DB_PATH")
+    fi
+    local idx=1
+    while IFS=$'\t' read -r user protocol limit_bytes expiry status; do
+        if [ -z "$user" ]; then
+            continue
+        fi
+        local used_label remaining_label limit_label
+        limit_label=$(format_limit "$limit_bytes")
+        local bytes used_mb
+        bytes=$(get_user_usage "$user")
+        used_mb=$(convert_to_mb "$bytes")
+        used_label="${used_mb} MB"
+        if [ "$limit_bytes" -le 0 ]; then
+            remaining_label="∞"
+        else
+            local remaining_bytes=$((limit_bytes - bytes))
+            if [ "$remaining_bytes" -lt 0 ]; then remaining_bytes=0; fi
+            remaining_label=$(format_usage_value "$remaining_bytes")
+        fi
+        printf "%-3s %-12s %-9s %-12s %-22s %-22s %-9s %-10s\n" \
+            "$idx" \
+            "$user" \
+            "$(echo "$protocol" | tr '[:lower:]' '[:upper:]')" \
+            "$limit_label" \
+            "$used_label" \
+            "$remaining_label" \
+            "$(echo "$status" | tr '[:lower:]' '[:upper:]')" \
+            "$expiry"
+        idx=$((idx + 1))
+    done <<< "$users"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+config_user_records() {
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    if ! awk '
+        /^#vls / {user=$2; expiry=$3; proto="vless"; next}
+        /^#vms / {user=$2; expiry=$3; proto="vmess"; next}
+        /^#tr / {user=$2; expiry=$3; proto="trojan"; next}
+        /^#ssw / {user=$2; expiry=$3; proto="ss"; next}
+        /^#ss / {user=$2; expiry=$3; proto="socks"; next}
+        user != "" && /"id":/ {
+            if (match($0, /"id": *"[^"]+"/)) {
+                id=substr($0, RSTART+6, RLENGTH-7)
+                print user "|" proto "|" expiry "|" id
+                user=""; expiry=""; proto=""
+            }
+        }
+        user != "" && /"password":/ {
+            if (match($0, /"password": *"[^"]+"/)) {
+                id=substr($0, RSTART+12, RLENGTH-13)
+                print user "|" proto "|" expiry "|" id
+                user=""; expiry=""; proto=""
+            }
+        }
+        user != "" && /"pass":/ {
+            if (match($0, /"pass": *"[^"]+"/)) {
+                id=substr($0, RSTART+8, RLENGTH-9)
+                print user "|" proto "|" expiry "|" id
+                user=""; expiry=""; proto=""
+            }
+        }
+    ' "$CONFIG_PATH"; then
+        log_msg "WARN" "Failed to parse ${CONFIG_PATH} for quota records; check file readability and format."
+        return 1
+    fi
+}
+
+sync_missing_users() {
+    if [ ! -f "$CONFIG_PATH" ]; then
+        return
+    fi
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local tmp_db
+    tmp_db=$(mktemp)
+    local empty_db_warning_suffix="Proceeding with sync using empty database as base."
+    if [ -f "$DB_PATH" ]; then
+        local cp_err
+        if ! cp_err=$(cp "$DB_PATH" "$tmp_db" 2>&1); then
+            log_msg "WARN" "Failed to copy quota DB from ${DB_PATH} to temporary file: ${cp_err:-reason unknown}. ${empty_db_warning_suffix}"
+            echo '{"users":[]}' > "$tmp_db"
+        fi
+    else
+        echo '{"users":[]}' > "$tmp_db"
+    fi
+    if ! jq -e '.users | type == "array"' "$tmp_db" >/dev/null 2>&1; then
+        log_msg "WARN" "Quota DB users field missing or not an array. ${empty_db_warning_suffix}"
+        echo '{"users":[]}' > "$tmp_db"
+    fi
+    local -A existing_user_map
+    while IFS= read -r existing_user; do
+        if [ -n "$existing_user" ]; then
+            existing_user_map["$existing_user"]=1
+        fi
+    done < <(jq -r '.users[] | .username' "$tmp_db")
+    local added=0
+    while IFS='|' read -r user protocol expiry uuid; do
+        if [ -z "$user" ]; then
+            continue
+        fi
+        if [ -z "${existing_user_map[$user]}" ]; then
+            jq --arg user "$user" \
+                --arg protocol "$protocol" \
+                --arg uuid "$uuid" \
+                --arg expiry "$expiry" \
+                --arg created "$now" \
+                '.users += [{
+                    id: $uuid,
+                    username: $user,
+                    email: $user,
+                    protocol: $protocol,
+                    created: $created,
+                    expiry: $expiry,
+                    bandwidth: {
+                        limit_bytes: 0,
+                        used_bytes: 0,
+                        last_reset: $created
+                    },
+                    status: "active",
+                    configs: {}
+                }]' "$tmp_db" > "${tmp_db}.next" && mv "${tmp_db}.next" "$tmp_db"
+            added=$((added + 1))
+            existing_user_map["$user"]=1
+        fi
+    done < <(config_user_records)
+    if [ "$added" -gt 0 ]; then
+        backup_db
+        mv "$tmp_db" "$DB_PATH"
+        log_msg "INFO" "Synced ${added} user(s) from config."
+    else
+        rm -f "$tmp_db"
+    fi
+}
+
+rebuild_db() {
+    mkdir -p "$(dirname "$DB_PATH")" "$BACKUP_DIR" 2>/dev/null
+    local tmp
+    tmp=$(mktemp)
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo '{"users":[]}' > "$tmp"
+    if [ ! -f "$CONFIG_PATH" ]; then
+        mv "$tmp" "$DB_PATH"
+        return
+    fi
+    while IFS='|' read -r user protocol expiry uuid; do
+        if [ -z "$user" ]; then
+            continue
+        fi
+        jq --arg user "$user" \
+            --arg protocol "$protocol" \
+            --arg uuid "$uuid" \
+            --arg expiry "$expiry" \
+            --arg created "$now" \
+            '.users += [{
+                id: $uuid,
+                username: $user,
+                email: $user,
+                protocol: $protocol,
+                created: $created,
+                expiry: $expiry,
+                bandwidth: {
+                    limit_bytes: 0,
+                    used_bytes: 0,
+                    last_reset: $created
+                },
+                status: "active",
+                configs: {}
+            }]' "$tmp" > "${tmp}.next" && mv "${tmp}.next" "$tmp"
+    done < <(config_user_records)
+    mv "$tmp" "$DB_PATH"
+}
+
+main() {
+    require_cmd jq
+    require_cmd bc
+    load_quota_config
+    resolve_xray_bin
+    db_init
+    local cmd="${1:-}"
+    case "$cmd" in
+        register)
+            register_account "$2" "$3" "$4" "$5" "$6" "${7:-}"
+            ;;
+        usage)
+            get_user_usage "$2"
+            ;;
+        reset)
+            reset_bandwidth "$2"
+            ;;
+        disable)
+            disable_user "$2" "${3:-quota}"
+            ;;
+        enable)
+            enable_user "$2"
+            ;;
+        enforce)
+            enforce_quotas
+            ;;
+        set-limit)
+            set_limit "$2" "$3"
+            ;;
+        extend-limit)
+            extend_limit "$2" "$3"
+            ;;
+        set-expiry)
+            set_expiry "$2" "$3"
+            ;;
+        show)
+            show_user "$2"
+            ;;
+        dashboard)
+            dashboard "${2:-all}"
+            ;;
+        delete)
+            delete_user "$2"
+            ;;
+        remove-user)
+            remove_user_record "$2"
+            ;;
+        remove-db)
+            remove_user_record "$2"
+            ;;
+        rebuild)
+            rebuild_db
+            ;;
+        *)
+            echo "Usage: $0 {register|usage|reset|disable|enable|enforce|set-limit|extend-limit|set-expiry|show|dashboard|delete|remove-user|remove-db|rebuild}"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

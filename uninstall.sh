@@ -113,7 +113,7 @@ remove_scripts() {
     local scripts=(
         "add-ws" "add-ssws" "add-socks" "add-vless" "add-tr" "add-trgo"
         "autoreboot" "restart" "tendang" "clearlog" "running"
-        "cek-trafik" "cek-speed" "cek-ram" "limit-speed"
+        "cek-speed" "cek-ram" "limit-speed"
         "realtime-hosts" "vless-proxy-identifier"
         "menu-vless" "menu-vmess" "menu-socks" "menu-ss" "menu-trojan"
         "menu-trgo" "menu-ssh" "menu-slowdns" "menu-captured-hosts"

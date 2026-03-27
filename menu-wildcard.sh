@@ -80,6 +80,140 @@ get_cert_subject() {
 }
 
 # ================================================================
+# Helper: update nginx server_name to wildcard domain
+# Nginx must match *.BASE_DOMAIN and BASE_DOMAIN so TLS SNI works
+# for every subdomain, not just a single hardcoded host.
+# ================================================================
+update_nginx_server_name() {
+    local domain="$1"
+    local nginx_conf="/etc/nginx/conf.d/xray.conf"
+    if [ -f "$nginx_conf" ]; then
+        sed -i "s|server_name .*;|server_name *.${domain} ${domain};|" "$nginx_conf"
+    fi
+}
+
+# ================================================================
+# Helper: restore nginx server_name to server IP / localhost
+# Called when wildcard cert is removed.
+# ================================================================
+restore_nginx_server_name() {
+    local nginx_conf="/etc/nginx/conf.d/xray.conf"
+    if [ -f "$nginx_conf" ]; then
+        local _ip=""
+        # Try cached IP from ipvps.conf first (avoids external HTTP call; portable sed)
+        if [ -f /var/lib/scrz-prem/ipvps.conf ]; then
+            _ip=$(sed -n 's/^IP=//p' /var/lib/scrz-prem/ipvps.conf 2>/dev/null | head -1)
+        fi
+        # Fall back to live lookup
+        if [ -z "$_ip" ]; then
+            _ip="$(curl -s https://ipinfo.io/ip 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null)"
+        fi
+        if [ -z "$_ip" ]; then
+            echo -e " ${INFO} Could not determine server IP. nginx server_name not restored."
+            return 1
+        fi
+        sed -i "s|server_name .*;|server_name ${_ip} localhost;|" "$nginx_conf"
+    fi
+}
+
+# ================================================================
+# Helper: create Cloudflare wildcard A records
+# Creates/updates both "example.com" and "*.example.com" A records
+# pointing to this server's public IP.  This is required so that
+# ALL subdomains resolve to the same VPS — a real prerequisite for
+# wildcard TLS to work end-to-end.
+# ================================================================
+setup_cloudflare_wildcard_dns() {
+    local domain="$1"
+    local cf_token="$2"
+    local server_ip
+    server_ip="$(curl -s https://ipinfo.io/ip 2>/dev/null || curl -s https://ifconfig.me 2>/dev/null)"
+
+    if [ -z "$server_ip" ]; then
+        echo -e " ${INFO} Could not detect server IP. Skipping automatic DNS record creation."
+        return 1
+    fi
+
+    echo -e " ${INFO} Setting up Cloudflare DNS records for ${BIWhite}${domain}${NC} -> ${BIWhite}${server_ip}${NC}..."
+
+    # Get zone ID: try the domain itself, then progressively strip subdomains
+    # so that entering e.g. "sd.example.com" correctly finds zone "example.com".
+    local zone_id=""
+    local lookup_domain="$domain"
+    while [ -z "$zone_id" ]; do
+        zone_id=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones?name=${lookup_domain}&status=active" \
+            -H "Authorization: Bearer ${cf_token}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id // empty' 2>/dev/null)
+        # Stop if found or if we've run out of parent domains to try
+        if [ -n "$zone_id" ]; then
+            break
+        fi
+        # Strip the leftmost label (e.g. "sd.example.com" -> "example.com")
+        local parent="${lookup_domain#*.}"
+        # Stop if stripping didn't change anything (already at root) or no dot remains
+        if [ "$parent" = "$lookup_domain" ] || [[ ! "$parent" =~ \. ]]; then
+            break
+        fi
+        lookup_domain="$parent"
+    done
+
+    if [ -z "$zone_id" ]; then
+        echo -e " ${EROR} Could not retrieve Cloudflare zone ID for ${domain}."
+        echo -e " ${INFO} Please add these DNS records manually in Cloudflare:"
+        echo -e "         A  ${domain}        -> ${server_ip}  (proxied: false)"
+        echo -e "         A  *.${domain}      -> ${server_ip}  (proxied: false)"
+        return 1
+    fi
+
+    # Helper: upsert an A record (create or update)
+    _cf_upsert_a_record() {
+        local rec_name="$1"
+        local rec_ip="$2"
+        local existing_id
+        existing_id=$(curl -s -X GET \
+            "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=A&name=${rec_name}" \
+            -H "Authorization: Bearer ${cf_token}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id // empty' 2>/dev/null)
+
+        local payload="{\"type\":\"A\",\"name\":\"${rec_name}\",\"content\":\"${rec_ip}\",\"ttl\":120,\"proxied\":false}"
+        local response success
+        if [ -n "$existing_id" ]; then
+            response=$(curl -s -X PUT \
+                "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records/${existing_id}" \
+                -H "Authorization: Bearer ${cf_token}" \
+                -H "Content-Type: application/json" \
+                --data "$payload")
+            success=$(echo "$response" | jq -r '.success' 2>/dev/null)
+            if [ "$success" = "true" ]; then
+                echo -e " ${OKEY} Updated A record: ${BIWhite}${rec_name}${NC} -> ${rec_ip}"
+            else
+                echo -e " ${EROR} Failed to update A record ${rec_name}: $(echo "$response" | jq -r '.errors[0].message // "unknown error"' 2>/dev/null)"
+            fi
+        else
+            response=$(curl -s -X POST \
+                "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records" \
+                -H "Authorization: Bearer ${cf_token}" \
+                -H "Content-Type: application/json" \
+                --data "$payload")
+            success=$(echo "$response" | jq -r '.success' 2>/dev/null)
+            if [ "$success" = "true" ]; then
+                echo -e " ${OKEY} Created A record: ${BIWhite}${rec_name}${NC} -> ${rec_ip}"
+            else
+                echo -e " ${EROR} Failed to create A record ${rec_name}: $(echo "$response" | jq -r '.errors[0].message // "unknown error"' 2>/dev/null)"
+            fi
+        fi
+    }
+
+    # Create/update base domain A record
+    _cf_upsert_a_record "${domain}" "${server_ip}"
+    # Create/update wildcard A record (*.domain -> server_ip)
+    _cf_upsert_a_record "*.${domain}" "${server_ip}"
+
+    echo -e " ${OKEY} Cloudflare wildcard DNS configured."
+    echo -e " ${INFO} DNS propagation may take 1-5 minutes."
+}
+
+# ================================================================
 # Install wildcard certificate
 # ================================================================
 install_wildcard() {
@@ -173,6 +307,10 @@ install_wildcard() {
         export CF_Token="$CF_TOKEN_INPUT"
 
         echo -e ""
+        echo -e " ${INFO} Setting up Cloudflare wildcard DNS records..."
+        setup_cloudflare_wildcard_dns "${BASE_DOMAIN}" "${CF_TOKEN_INPUT}"
+
+        echo -e ""
         echo -e " ${INFO} Issuing wildcard certificate via Cloudflare DNS-01..."
         "$ACME" --issue --dns dns_cf \
             -d "*.${BASE_DOMAIN}" \
@@ -206,12 +344,15 @@ install_wildcard() {
     fi
 
     # Install certificate
+    # --reloadcmd ensures acme.sh auto-renewal also reinstalls cert files
+    # and restarts services — without this, auto-renewal leaves stale files.
     echo -e ""
     echo -e " ${INFO} Installing certificate files..."
     "$ACME" --installcert \
         -d "*.${BASE_DOMAIN}" \
         --fullchainpath "$CERT_DIR/xray.crt" \
         --keypath "$CERT_DIR/xray.key" \
+        --reloadcmd "systemctl restart xray nginx" \
         --ecc 2>&1
 
     if [ $? -ne 0 ]; then
@@ -232,10 +373,15 @@ install_wildcard() {
     } > "$WILDCARD_CONFIG"
     chmod 600 "$WILDCARD_CONFIG"
 
-    # Update domain file
+    # Update domain file with wildcard notation
     echo "*.${BASE_DOMAIN}" > /etc/xray/domain
 
-    # Restart services to apply new certificate
+    # Update nginx server_name so TLS SNI matches any subdomain of BASE_DOMAIN.
+    # Without this, nginx only serves the hardcoded 127.0.0.1/localhost name
+    # and rejects connections from test1.example.com, user123.example.com, etc.
+    update_nginx_server_name "${BASE_DOMAIN}"
+
+    # Restart services to apply new certificate and nginx config
     systemctl restart xray 2>/dev/null
     systemctl restart nginx 2>/dev/null
 
@@ -288,6 +434,13 @@ show_wildcard_status() {
     echo -e " ${BICyan}Subject        : ${BIWhite}$(get_cert_subject)${NC}"
     echo -e ""
 
+    # Check nginx server_name configuration (portable sed, avoids grep -P)
+    local nginx_sn
+    nginx_sn=$(sed -n 's/.*server_name \(.*\);.*/\1/p' /etc/nginx/conf.d/xray.conf 2>/dev/null | head -1)
+    nginx_sn="${nginx_sn:-not found}"
+    echo -e " ${BICyan}Nginx server_name: ${BIWhite}${nginx_sn}${NC}"
+    echo -e ""
+
     # Check certificate validity
     if openssl x509 -checkend 86400 -noout -in "$CERT_DIR/xray.crt" 2>/dev/null; then
         echo -e " ${OKEY} Certificate is valid (more than 1 day remaining)."
@@ -295,6 +448,11 @@ show_wildcard_status() {
         echo -e " ${EROR} Certificate is expired or expires within 24 hours!"
         echo -e " ${INFO} Use option [3] to renew the certificate."
     fi
+
+    echo -e ""
+    echo -e " ${BICyan}Test subdomains (all should connect via TLS):${NC}"
+    echo -e "   ${BIWhite}test1.${WILDCARD_BASE_DOMAIN}${NC}"
+    echo -e "   ${BIWhite}user123.${WILDCARD_BASE_DOMAIN}${NC}"
 
     echo -e ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m${NC}"
@@ -345,11 +503,12 @@ renew_wildcard() {
         return
     fi
 
-    # Reinstall certificate files
+    # Reinstall certificate files with reload command for future auto-renewals
     "$ACME" --installcert \
         -d "*.${WILDCARD_BASE_DOMAIN}" \
         --fullchainpath "$CERT_DIR/xray.crt" \
         --keypath "$CERT_DIR/xray.key" \
+        --reloadcmd "systemctl restart xray nginx" \
         --ecc 2>&1
 
     # Restart services
@@ -407,6 +566,11 @@ remove_wildcard() {
 
     # Restore domain file to the base domain (without wildcard prefix)
     echo "$WILDCARD_BASE_DOMAIN" > /etc/xray/domain
+
+    # Restore nginx server_name back to server IP / localhost
+    # so nginx stops advertising the wildcard domain after cert removal.
+    restore_nginx_server_name
+    systemctl restart nginx 2>/dev/null
 
     echo -e ""
     echo -e " ${OKEY} Wildcard certificate removed."

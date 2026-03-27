@@ -51,16 +51,13 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
 
 ## ✨ New Features
 
-### 🎯 Bandwidth Quota System (3x-ui Style)
-- **Per-user data quotas** for VLESS, VMESS, Trojan, and Shadowsocks
-- Automatic quota enforcement when limit exceeded
-- Easy quota management via command-line tools
-- Supports GB, MB, TB units
-- Real-time traffic monitoring
-- **NEW: User quota reset** - Reset bandwidth usage and re-enable users
-- **NEW: Automatic Xray restart** after quota reset
-- See [BANDWIDTH_QUOTA_GUIDE.md](BANDWIDTH_QUOTA_GUIDE.md) for details
-- See [USER_QUOTA_RESET_GUIDE.md](USER_QUOTA_RESET_GUIDE.md) for reset feature
+### 🎯 Aggregated Bandwidth Traffic Limiting
+- **Per-account total bandwidth limits** for VLESS/VMESS across WS, GRPC, and XHTTP
+- Single aggregated usage counter per account (uplink + downlink, no protocol duplication)
+- Automatic account disable when total limit is exceeded
+- JSON-based account database with limit, usage, expiry, status, and reset timestamp
+- 1-minute monitor cycle for near real-time enforcement
+- CLI bandwidth dashboard (menu-bandwidth) for reset/extend/enable/disable workflows
 
 ### 📡 Host Capture System
 - Captures all incoming hosts/domains from VPN connections
@@ -115,8 +112,8 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
 ```
    [ Service & Port ]
    - OpenSSH                 : 22
-   - SSH Websocket           : 80
-   - SSH SSL Websocket       : 443
+   - SSH Websocket           : ALL HTTP PORTS
+   - SSH SSL Websocket       : ALL HTTPS PORTA
    - Stunnel5                : 447, 777
    - Dropbear                : 109, 143
    - Badvpn                  : 7100-7300

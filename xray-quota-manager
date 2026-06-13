@@ -1,0 +1,383 @@
+#!/bin/bash
+# =========================================
+# Xray Bandwidth Quota Management
+# Based on 3x-ui implementation
+# Manages TotalGB limits per client
+# Author: LamonLind
+# (C) Copyright 2024
+# =========================================
+
+# Color definitions
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Configuration
+QUOTA_CONF="/etc/xray/client-quotas.conf"
+XRAY_CONFIG="/etc/xray/config.json"
+
+# Ensure directory exists
+mkdir -p /etc/xray 2>/dev/null
+
+# Initialize quota config if not exists
+[ ! -f "$QUOTA_CONF" ] && touch "$QUOTA_CONF"
+
+# Convert human size to bytes (like 3x-ui TotalGB conversion)
+# Input: 10GB, 500MB, 1TB
+# Output: bytes
+size_to_bytes() {
+    local size="$1"
+    local number=$(echo "$size" | grep -oP '^\d+(\.\d+)?')
+    local unit=$(echo "$size" | grep -oP '[A-Za-z]+$' | tr '[:lower:]' '[:upper:]')
+    
+    case "$unit" in
+        KB) echo $(awk "BEGIN {print int($number * 1024)}") ;;
+        MB) echo $(awk "BEGIN {print int($number * 1024 * 1024)}") ;;
+        GB) echo $(awk "BEGIN {print int($number * 1024 * 1024 * 1024)}") ;;
+        TB) echo $(awk "BEGIN {print int($number * 1024 * 1024 * 1024 * 1024)}") ;;
+        *) echo "$number" ;;
+    esac
+}
+
+# Convert bytes to human readable (like 3x-ui FormatTraffic)
+bytes_to_human() {
+    local bytes="$1"
+    if [ "$bytes" -ge 1099511627776 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f TB\", $bytes/1099511627776}")"
+    elif [ "$bytes" -ge 1073741824 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}")"
+    elif [ "$bytes" -ge 1048576 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}")"
+    elif [ "$bytes" -ge 1024 ]; then
+        echo "$(awk "BEGIN {printf \"%.2f KB\", $bytes/1024}")"
+    else
+        echo "${bytes} Bytes"
+    fi
+}
+
+# Set quota for a user (like 3x-ui Client.TotalGB)
+# Usage: set_quota <email> <quota_size>
+set_quota() {
+    local email="$1"
+    local quota_size="$2"
+    
+    # Convert to bytes
+    local quota_bytes=$(size_to_bytes "$quota_size")
+    
+    # Remove old entry (use mktemp for security)
+    local tmpfile=$(mktemp)
+    grep -v "^$email|" "$QUOTA_CONF" > "$tmpfile" 2>/dev/null
+    mv "$tmpfile" "$QUOTA_CONF"
+    
+    # Add new entry: email|total_bytes|enabled
+    echo "$email|$quota_bytes|true" >> "$QUOTA_CONF"
+    
+    echo -e "${GREEN}✓ Quota set for $email: $(bytes_to_human $quota_bytes)${NC}"
+}
+
+# Remove quota for a user
+remove_quota() {
+    local email="$1"
+    local tmpfile=$(mktemp)
+    
+    grep -v "^$email|" "$QUOTA_CONF" > "$tmpfile" 2>/dev/null
+    mv "$tmpfile" "$QUOTA_CONF"
+    
+    echo -e "${GREEN}✓ Quota removed for $email${NC}"
+}
+
+# Get quota for a user (returns bytes, 0 if unlimited)
+get_quota() {
+    local email="$1"
+    local quota=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f2)
+    echo "${quota:-0}"
+}
+
+# Check if user has quota
+has_quota() {
+    local email="$1"
+    grep -q "^$email|" "$QUOTA_CONF" 2>/dev/null
+}
+
+# Get separate uplink and downlink traffic
+# NOTE: Downlink is divided by 3 to fix overcounting bug (users exist in 3 inbound configs)
+# Uplink is tracked normally without division
+get_user_traffic_detailed() {
+    local email="$1"
+    local uplink=0
+    local downlink=0
+    local _Xray="/usr/local/bin/xray"
+    
+    # Check if xray exists and is executable
+    if [ -x "$_Xray" ]; then
+        # Get uplink (upload) - handle both "value":"123" and "value": 123 formats
+        # Uplink tracks normally (no division)
+        uplink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        [ -z "$uplink" ] && uplink=0
+        
+        # Get downlink (download) - handle both "value":"123" and "value": 123 formats
+        downlink=$($_Xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\?\([0-9]\+\)"\?.*/\1/p' | head -1)
+        [ -z "$downlink" ] && downlink=0
+    fi
+    
+    # Return uplink (normal) and downlink/3 as space-separated values
+    echo "$uplink $(( downlink / 3 ))"
+}
+
+# Get user traffic from xray stats API
+# NOTE: Only downlink (client download) is divided by 3 to fix overcounting bug.
+# Uplink (client upload) is tracked normally.
+# The 3x bug occurs because users exist in multiple inbound configurations
+# (ws/grpc/xhttp) and Xray aggregates download stats across all of them.
+# Formula: uplink + (downlink / 3)
+get_user_traffic() {
+    local email="$1"
+    
+    # Get detailed traffic and sum them
+    local traffic_details=$(get_user_traffic_detailed "$email")
+    local uplink=${traffic_details%% *}
+    local downlink_div3=${traffic_details##* }
+    
+    # Return total: uplink + (downlink/3)
+    echo $(( uplink + downlink_div3 ))
+}
+
+# Reset user bandwidth usage statistics
+# This resets the xray stats for both uplink and downlink
+reset_user_stats() {
+    local email="$1"
+    local _Xray="/usr/local/bin/xray"
+    
+    # Check if xray exists and is executable
+    if [ ! -x "$_Xray" ]; then
+        echo -e "${RED}✗ Xray binary not found or not executable${NC}"
+        return 1
+    fi
+    
+    # Reset uplink stats
+    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>uplink" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Warning: Failed to reset uplink statistics${NC}"
+    fi
+    
+    # Reset downlink stats
+    if ! $_Xray api statsclear --server=127.0.0.1:10085 -pattern "user>>>$email>>>traffic>>>downlink" 2>/dev/null; then
+        echo -e "${YELLOW}⚠ Warning: Failed to reset downlink statistics${NC}"
+    fi
+    
+    echo -e "${GREEN}✓ Statistics reset for $email${NC}"
+}
+
+# Reset user quota and enable them
+# This function:
+# 1. Resets bandwidth usage statistics via Xray API
+# 2. Re-enables user in quota config (if disabled)
+# 3. Restarts Xray service to apply changes
+reset_user_quota() {
+    local email="$1"
+    
+    # Check if user has a quota entry
+    if ! has_quota "$email"; then
+        echo -e "${YELLOW}⚠ User $email does not have a quota configured${NC}"
+        echo -e "${YELLOW}  You can set a quota with: $0 set $email <quota>${NC}"
+        return 1
+    fi
+    
+    # Get current quota info
+    local quota=$(get_quota "$email")
+    local quota_status=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f3)
+    
+    echo -e "${BLUE}=== Resetting User Quota ===${NC}"
+    echo -e "User: ${YELLOW}$email${NC}"
+    echo -e "Quota Limit: ${YELLOW}$(bytes_to_human $quota)${NC}"
+    echo -e "Current Status: ${YELLOW}$quota_status${NC}"
+    echo ""
+    
+    # Step 1: Reset statistics
+    echo -e "${INFO} Resetting bandwidth statistics..."
+    reset_user_stats "$email"
+    
+    # Step 2: Re-enable in quota config if disabled
+    if [ "$quota_status" != "true" ]; then
+        echo -e "${INFO} Re-enabling user in quota config..."
+        # Use mktemp for safer file manipulation
+        local tmpfile=$(mktemp)
+        awk -v email="$email" -F'|' '
+            $1 == email { $3 = "true" }
+            { print $1 FS $2 FS $3 }
+        ' "$QUOTA_CONF" > "$tmpfile" && mv "$tmpfile" "$QUOTA_CONF"
+        echo -e "${GREEN}✓ User re-enabled in quota config${NC}"
+    else
+        echo -e "${GREEN}✓ User already enabled in quota config${NC}"
+    fi
+    
+    # Step 3: Restart Xray service
+    echo -e "${INFO} Restarting Xray service to apply changes..."
+    if systemctl restart xray 2>/dev/null; then
+        echo -e "${GREEN}✓ Xray service restarted successfully${NC}"
+    else
+        echo -e "${RED}✗ Failed to restart Xray service${NC}"
+        echo -e "${YELLOW}  Please restart manually: systemctl restart xray${NC}"
+        return 1
+    fi
+    
+    echo ""
+    echo -e "${GREEN}=== Quota Reset Complete ===${NC}"
+    echo -e "${GREEN}✓ User $email has been reset and re-enabled${NC}"
+    echo -e "${GREEN}✓ Bandwidth usage statistics cleared${NC}"
+    echo -e "${GREEN}✓ Quota limit maintained: $(bytes_to_human $quota)${NC}"
+    echo ""
+}
+
+# Show usage for a specific user
+show_usage() {
+    local email="$1"
+    
+    # Get quota
+    local quota=$(get_quota "$email")
+    local quota_status=$(grep "^$email|" "$QUOTA_CONF" 2>/dev/null | cut -d'|' -f3)
+    
+    # Get current usage (total)
+    local current_usage=$(get_user_traffic "$email")
+    
+    # Get detailed traffic (upload and download separately)
+    local traffic_details=$(get_user_traffic_detailed "$email")
+    local upload_usage=$(echo $traffic_details | cut -d' ' -f1)
+    local download_usage=$(echo $traffic_details | cut -d' ' -f2)
+    
+    echo -e "${BLUE}=== Bandwidth Usage for $email ===${NC}"
+    echo ""
+    
+    if [ "$quota" -eq 0 ]; then
+        echo -e "Quota Limit    : ${GREEN}Unlimited${NC}"
+        echo -e "Upload Used    : $(bytes_to_human $upload_usage)"
+        echo -e "Download Used  : $(bytes_to_human $download_usage)"
+        echo -e "Total Usage    : $(bytes_to_human $current_usage)"
+        echo -e "Status         : ${GREEN}Active${NC}"
+    else
+        local usage_percent=0
+        if [ "$quota" -gt 0 ]; then
+            usage_percent=$(awk "BEGIN {printf \"%.1f\", ($current_usage * 100.0) / $quota}")
+        fi
+        
+        echo -e "Quota Limit    : $(bytes_to_human $quota)"
+        echo -e "Upload Used    : $(bytes_to_human $upload_usage)"
+        echo -e "Download Used  : $(bytes_to_human $download_usage)"
+        echo -e "Total Usage    : $(bytes_to_human $current_usage)"
+        echo -e "Usage Percent  : ${usage_percent}%"
+        
+        if [ "$quota_status" = "true" ]; then
+            if [ "$current_usage" -ge "$quota" ]; then
+                echo -e "Status         : ${RED}Quota Exceeded (will be disabled)${NC}"
+            else
+                local remaining=$((quota - current_usage))
+                echo -e "Remaining      : $(bytes_to_human $remaining)"
+                echo -e "Status         : ${GREEN}Active${NC}"
+            fi
+        else
+            echo -e "Status         : ${RED}Disabled (quota exceeded)${NC}"
+        fi
+    fi
+    echo ""
+}
+
+# List all quotas (like 3x-ui client list)
+list_quotas() {
+    echo -e "${BLUE}=== Client Bandwidth Quotas ===${NC}\n"
+    
+    if [ ! -s "$QUOTA_CONF" ]; then
+        echo -e "${YELLOW}No quotas configured${NC}"
+        return
+    fi
+    
+    printf "%-25s %-15s %-15s %-10s %-10s\n" "Email" "Quota" "Usage" "Percent" "Status"
+    printf "%-25s %-15s %-15s %-10s %-10s\n" "-----" "-----" "-----" "-------" "------"
+    
+    while IFS='|' read -r email total_bytes enabled; do
+        [ -z "$email" ] && continue
+        
+        local total_human=$(bytes_to_human $total_bytes)
+        local current_usage=$(get_user_traffic "$email")
+        local usage_human=$(bytes_to_human $current_usage)
+        
+        local usage_percent="N/A"
+        if [ "$total_bytes" -gt 0 ]; then
+            usage_percent=$(awk "BEGIN {printf \"%.1f%%\", ($current_usage * 100.0) / $total_bytes}")
+        fi
+        
+        printf "%-25s %-15s %-15s %-10s %-10s\n" "$email" "$total_human" "$usage_human" "$usage_percent" "$enabled"
+    done < "$QUOTA_CONF"
+}
+
+# Main command handler
+case "$1" in
+    set)
+        if [ -z "$2" ] || [ -z "$3" ]; then
+            echo -e "${RED}Usage: $0 set <email> <quota>${NC}"
+            echo -e "Example: $0 set user@example.com 10GB"
+            exit 1
+        fi
+        set_quota "$2" "$3"
+        ;;
+    
+    remove)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 remove <email>${NC}"
+            exit 1
+        fi
+        remove_quota "$2"
+        ;;
+    
+    get)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 get <email>${NC}"
+            exit 1
+        fi
+        quota=$(get_quota "$2")
+        if [ "$quota" -eq 0 ]; then
+            echo -e "${YELLOW}No quota set (unlimited)${NC}"
+        else
+            echo -e "Quota: $(bytes_to_human $quota)"
+        fi
+        ;;
+    
+    list)
+        list_quotas
+        ;;
+    
+    usage)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 usage <email>${NC}"
+            exit 1
+        fi
+        show_usage "$2"
+        ;;
+    
+    reset)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Usage: $0 reset <email>${NC}"
+            echo -e "Example: $0 reset user@example.com"
+            exit 1
+        fi
+        reset_user_quota "$2"
+        ;;
+    
+    *)
+        echo -e "${BLUE}Xray Quota Manager (3x-ui style)${NC}"
+        echo -e "\nUsage: $0 <command> [options]"
+        echo -e "\nCommands:"
+        echo -e "  set <email> <quota>   - Set quota (e.g., 10GB, 500MB, 1TB)"
+        echo -e "  remove <email>        - Remove quota"
+        echo -e "  get <email>           - Get quota for user"
+        echo -e "  usage <email>         - Show current bandwidth usage"
+        echo -e "  list                  - List all quotas with usage"
+        echo -e "  reset <email>         - Reset quota usage and re-enable user"
+        echo -e "\nExamples:"
+        echo -e "  $0 set user@test.com 10GB"
+        echo -e "  $0 usage user@test.com"
+        echo -e "  $0 reset user@test.com"
+        echo -e "  $0 list"
+        exit 1
+        ;;
+esac

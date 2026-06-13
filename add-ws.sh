@@ -97,13 +97,19 @@ menu
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
-read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
-bw_limit=${bw_limit:-0}
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
-# Add bandwidth limit if specified
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-    /usr/bin/cek-bw-limit add "$user" "$bw_limit" "vmess" >/dev/null 2>&1
+
+# Bandwidth quota prompt (like 3x-ui)
+echo ""
+echo -e "${YELLOW}Bandwidth Quota Limit:${NC}"
+echo "Enter data quota limit (e.g., 10GB, 500MB, 1TB)"
+echo "Press Enter for unlimited"
+read -p "Quota: " quota_limit
+if [ -n "$quota_limit" ]; then
+    # Set quota using quota manager
+    /usr/bin/xray-quota-manager set "$user" "$quota_limit" 2>/dev/null
 fi
+
 sed -i '/#vmess$/a\#vms '"$user $exp"'\
 },{"id": "'""$uuid""'","alterId": '"0"',"email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#vmessworry$/a\### '"$user $exp"'\
@@ -276,6 +282,11 @@ cat > /home/vps/public_html/vmess-$user.txt <<-END
 ====================================================================
 
 _______________________________________________________
+              Vmess Account Information
+_______________________________________________________
+Username/Email : $user
+Expired On : $exp
+_______________________________________________________
               Link Vmess Account
 _______________________________________________________
 Link TLS : vmess://$(echo $asu | base64 -w 0)
@@ -288,8 +299,6 @@ Link XHTTP TLS : vmess://$(echo $xhttp_tls | base64 -w 0)
 _______________________________________________________
 Link XHTTP none TLS : vmess://$(echo $xhttp_ntls | base64 -w 0)
 _______________________________________________________
-Expired On : $exp
-
 END
 systemctl restart xray > /dev/null 2>&1
 service cron restart > /dev/null 2>&1
@@ -298,6 +307,7 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "\\E[0;41;36m        Xray/Vmess Account        \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Remarks : ${user}" | tee -a /etc/log-create-user.log
+echo -e "Email/Username : ${user}" | tee -a /etc/log-create-user.log
 echo -e "Domain : ${domain}" | tee -a /etc/log-create-user.log
 echo -e "Port TLS : ${tls}" | tee -a /etc/log-create-user.log
 echo -e "Port none TLS : ${none}" | tee -a /etc/log-create-user.log
@@ -333,12 +343,6 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "Link Vmess Config : http://${domain}:81/vmess-$user.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
-echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-echo -e "Bandwidth Limit : ${bw_limit} MB" | tee -a /etc/log-create-user.log
-else
-echo -e "Bandwidth Limit : Unlimited" | tee -a /etc/log-create-user.log
-fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo "" | tee -a /etc/log-create-user.log
 rm /etc/xray/$user-tls.json > /dev/null 2>&1

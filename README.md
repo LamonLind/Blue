@@ -48,6 +48,31 @@ PLEASE MAKE SURE YOUR DOMAIN SETTINGS IN YOUR CLOUDFLARE AS BELOW (SSL/TLS SETTI
   ```html
  apt-get update && apt-get upgrade -y && apt dist-upgrade -y && update-grub && reboot
  ```
+
+## ✨ New Features
+
+### 🎯 Bandwidth Quota System (3x-ui Style)
+- **Per-user data quotas** for VLESS, VMESS, Trojan, and Shadowsocks
+- Automatic quota enforcement when limit exceeded
+- Easy quota management via command-line tools
+- Supports GB, MB, TB units
+- Real-time traffic monitoring
+- **NEW: User quota reset** - Reset bandwidth usage and re-enable users
+- **NEW: Automatic Xray restart** after quota reset
+- See [BANDWIDTH_QUOTA_GUIDE.md](BANDWIDTH_QUOTA_GUIDE.md) for details
+- See [USER_QUOTA_RESET_GUIDE.md](USER_QUOTA_RESET_GUIDE.md) for reset feature
+
+### 📡 Host Capture System
+- Captures all incoming hosts/domains from VPN connections
+- Tracks source IP addresses
+- Prevents duplicate entries
+- Real-time monitoring with 2-second intervals
+- **NEW: Systemd service daemon** for continuous 24/7 monitoring
+- **NEW: Full root access** for comprehensive log scanning
+- **NEW: Enhanced patterns** - TCP, WebSocket, Bug hosts, CDN hosts
+- See [HOST_CAPTURE_GUIDE.md](HOST_CAPTURE_GUIDE.md) for details
+- See [HOST_CAPTURE_SERVICE_GUIDE.md](HOST_CAPTURE_SERVICE_GUIDE.md) for service details
+
 ♦️ Installation Link <br>
 
   ```html
@@ -82,7 +107,9 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
 ✅ AUTOMATIC VPS REBOOT <br>
 ✅ BACKUP & RESTORE <br>
 ✅ XRAYCORE CHANGER <br>
-✅ VIRTUAL SWAPRAM <br></br>
+✅ VIRTUAL SWAPRAM <br>
+✅ UPDATE SCRIPT (Component-based updates) <br>
+✅ UNINSTALL SCRIPT (Complete removal) <br></br>
 
 
 ```
@@ -125,4 +152,39 @@ apt --fix-missing update && apt update && apt upgrade -y && apt install -y bzip2
    - Admin Control
    - Restore Data
    - Full Orders For Various Services
+```
+
+## Update & Uninstall Features
+
+### Update Script
+Update individual components or all scripts without full reinstallation:
+```bash
+# From command line
+update
+
+# Or from menu, select option 29
+```
+
+**Update Options:**
+- Update all scripts (recommended)
+- Update specific components (SSH, XRAY, Menus, Utilities)
+- Check for version updates
+
+### Uninstall Script
+Completely remove Blue VPN Script from your system:
+```bash
+# From command line
+uninstall
+
+# Or from menu, select option 30
+```
+
+**Features:**
+- Complete removal of all components
+- Automatic backup before removal
+- Safe confirmation required
+- Service cleanup and firewall reset
+
+📖 **For detailed documentation, see [UPDATE_UNINSTALL_GUIDE.md](UPDATE_UNINSTALL_GUIDE.md)**
+
 ```

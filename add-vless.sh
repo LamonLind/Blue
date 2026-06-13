@@ -95,13 +95,19 @@ clear
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
-read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
-bw_limit=${bw_limit:-0}
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
-# Add bandwidth limit if specified
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-    /usr/bin/cek-bw-limit add "$user" "$bw_limit" "vless" >/dev/null 2>&1
+
+# Bandwidth quota prompt (like 3x-ui)
+echo ""
+echo -e "${YELLOW}Bandwidth Quota Limit:${NC}"
+echo "Enter data quota limit (e.g., 10GB, 500MB, 1TB)"
+echo "Press Enter for unlimited"
+read -p "Quota: " quota_limit
+if [ -n "$quota_limit" ]; then
+    # Set quota using quota manager
+    /usr/bin/xray-quota-manager set "$user" "$quota_limit" 2>/dev/null
 fi
+
 sed -i '/#vless$/a\#vls '"$user $exp"'\
 },{"id": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#vlessgrpc$/a\#vlsg '"$user $exp"'\
@@ -120,6 +126,11 @@ cat > /home/vps/public_html/vless-$user.txt <<-END
 ====================================================================
 
 _______________________________________________________
+              Vless Account Information
+_______________________________________________________
+Username/Email : $user
+Expired On : $exp
+_______________________________________________________
               Link Vless Account
 _______________________________________________________
 Link TLS : vless://${uuid}@${domain}:443?type=ws&encryption=none&security=tls&host=${domain}&path=/vless&allowInsecure=1&sni=${domain}#XRAY_VLESS_TLS_${user}
@@ -131,8 +142,6 @@ _______________________________________________________
 Link XHTTP TLS : vless://${uuid}@${domain}:443?type=xhttp&encryption=none&security=tls&host=${domain}&path=/vless-xhttp&sni=${domain}#VLESS_XHTTP_TLS_${user}
 _______________________________________________________
 Link XHTTP none TLS : vless://${uuid}@${domain}:80?type=xhttp&encryption=none&security=none&host=${domain}&path=/vless-xhttp#VLESS_XHTTP_NTLS_${user}
-_______________________________________________________
-Expired On : $exp
 _______________________________________________________
 
 END
@@ -147,6 +156,7 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "\E[44;1;39m        XRAY VLESS Account        \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Remarks : ${user}" | tee -a /etc/log-create-user.log
+echo -e "Email/Username : ${user}" | tee -a /etc/log-create-user.log
 echo -e "Domain : ${domain}" | tee -a /etc/log-create-user.log
 echo -e "port TLS : $tls" | tee -a /etc/log-create-user.log
 echo -e "port none TLS : $none" | tee -a /etc/log-create-user.log
@@ -170,12 +180,6 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "Link Vless Config : http://${domain}:81/vless-$user.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
-echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-echo -e "Bandwidth Limit : ${bw_limit} MB" | tee -a /etc/log-create-user.log
-else
-echo -e "Bandwidth Limit : Unlimited" | tee -a /etc/log-create-user.log
-fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo "" | tee -a /etc/log-create-user.log
 read -n 1 -s -r -p "Press any key to back on menu"

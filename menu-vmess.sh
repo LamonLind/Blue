@@ -200,10 +200,6 @@ sed -i "/^#vmsx $user $exp/,/^},{/d" /etc/xray/config.json
 sed -i "/^### $user $exp/,/^},{/d" /etc/xray/config.json
 rm -f /etc/xray/vmess-$user-tls.json /etc/xray/vmess-$user-nontls.json
 rm -f /home/vps/public_html/vmess-$user.txt
-# Remove bandwidth limit and tracking entries
-sed -i "/^$user /d" /etc/xray/bw-limit.conf 2>/dev/null
-sed -i "/^$user /d" /etc/xray/bw-usage.conf 2>/dev/null
-sed -i "/^$user /d" /etc/xray/bw-last-stats.conf 2>/dev/null
 systemctl restart xray.service
 clear
 echo ""

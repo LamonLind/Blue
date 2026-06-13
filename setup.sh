@@ -187,10 +187,8 @@ wget -q -O /usr/bin/clearlog "https://raw.githubusercontent.com/LamonLind/Blue/m
 wget -q -O /usr/bin/running "https://raw.githubusercontent.com/LamonLind/Blue/main/running.sh"
 wget -q -O /usr/bin/cek-trafik "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-trafik.sh"
 wget -q -O /usr/bin/cek-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/speedtes_cli.py"
-wget -q -O /usr/bin/cek-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bandwidth.sh"
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
-wget -q -O /usr/bin/cek-bw-limit "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bw-limit.sh"
 wget -q -O /usr/bin/menu-vless "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vless.sh"
 wget -q -O /usr/bin/menu-vmess "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vmess.sh"
 wget -q -O /usr/bin/menu-socks "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-socks.sh"
@@ -200,6 +198,8 @@ wget -q -O /usr/bin/menu-trgo "https://raw.githubusercontent.com/LamonLind/Blue/
 wget -q -O /usr/bin/menu-ssh "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-ssh.sh"
 wget -q -O /usr/bin/menu-slowdns "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-slowdns.sh"
 wget -q -O /usr/bin/menu-captured-hosts "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-captured-hosts.sh"
+wget -q -O /usr/bin/menu-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bandwidth.sh"
+wget -q -O /usr/bin/menu-wildcard "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-wildcard.sh"
 wget -q -O /usr/bin/capture-host "https://raw.githubusercontent.com/LamonLind/Blue/main/capture-host.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-telegram.sh"
 wget -q -O /usr/bin/menu-bckp "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-bckp-github.sh"
@@ -210,9 +210,13 @@ wget -q -O /usr/bin/menu "https://raw.githubusercontent.com/LamonLind/Blue/main/
 wget -q -O /usr/bin/wbm "https://raw.githubusercontent.com/LamonLind/Blue/main/webmin.sh"
 wget -q -O /usr/bin/xp "https://raw.githubusercontent.com/LamonLind/Blue/main/xp.sh"
 wget -q -O /usr/bin/update "https://raw.githubusercontent.com/LamonLind/Blue/main/update.sh"
+wget -q -O /usr/bin/uninstall "https://raw.githubusercontent.com/LamonLind/Blue/main/uninstall.sh"
 wget -q -O /usr/bin/dns "https://raw.githubusercontent.com/LamonLind/Blue/main/dns.sh"
 wget -q -O /usr/bin/netf "https://raw.githubusercontent.com/LamonLind/Blue/main/netf.sh"
 wget -q -O /usr/bin/bbr "https://raw.githubusercontent.com/LamonLind/Blue/main/bbr.sh"
+# Quota system scripts (3x-ui style bandwidth limits)
+wget -q -O /usr/bin/xray-quota-manager "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-quota-manager"
+wget -q -O /usr/bin/xray-traffic-monitor "https://raw.githubusercontent.com/LamonLind/Blue/main/xray-traffic-monitor"
 #wget -q -O /usr/bin/del-xrays "https://raw.githubusercontent.com/LamonLind/Blue/main/del-xrays.sh"
 #wget -q -O /usr/bin/user-xrays "https://raw.githubusercontent.com/LamonLind/Blue/main/user-xrays.sh"
 chmod +x /usr/bin/add-ws
@@ -229,10 +233,8 @@ chmod +x /usr/bin/clearlog
 chmod +x /usr/bin/running
 chmod +x /usr/bin/cek-trafik
 chmod +x /usr/bin/cek-speed
-chmod +x /usr/bin/cek-bandwidth
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
-chmod +x /usr/bin/cek-bw-limit
 chmod +x /usr/bin/menu-vless
 chmod +x /usr/bin/menu-vmess
 chmod +x /usr/bin/menu-ss
@@ -242,6 +244,8 @@ chmod +x /usr/bin/menu-trgo
 chmod +x /usr/bin/menu-ssh
 chmod +x /usr/bin/menu-slowdns
 chmod +x /usr/bin/menu-captured-hosts
+chmod +x /usr/bin/menu-bandwidth
+chmod +x /usr/bin/menu-wildcard
 chmod +x /usr/bin/capture-host
 chmod +x /usr/bin/menu-bckp
 chmod +x /usr/bin/menu
@@ -249,9 +253,12 @@ chmod +x /usr/bin/bckp
 chmod +x /usr/bin/wbm
 chmod +x /usr/bin/xp
 chmod +x /usr/bin/update
+chmod +x /usr/bin/uninstall
 chmod +x /usr/bin/dns
 chmod +x /usr/bin/netf
 chmod +x /usr/bin/bbr
+chmod +x /usr/bin/xray-quota-manager
+chmod +x /usr/bin/xray-traffic-monitor
 #chmod +x /usr/bin/del-xrays
 #chmod +x /usr/bin/user-xrays
 
@@ -294,90 +301,66 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 2 1 * * * root /usr/bin/clearlog
 END
 
-cat > /etc/cron.d/capture_host <<-END
-SHELL=/bin/sh
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-# Legacy cron job for backward compatibility and fallback
-# The primary host-capture.service runs every 2 seconds for real-time monitoring
-# This cron job runs every minute as a fallback in case the service fails
-# It also ensures hosts are captured even if systemd is not available
-* * * * * root /usr/bin/capture-host >/dev/null 2>&1
-END
+# Initialize hosts file for universal host capture
+mkdir -p /etc/myvpn 2>/dev/null
+touch /etc/myvpn/hosts.log 2>/dev/null
+touch /etc/myvpn/.capture-state 2>/dev/null
 
-# Create systemd service for bandwidth limit checking with safe 2-second intervals
-# Note: 2-second interval provides accurate real-time bandwidth monitoring
-# This provides accurate tracking and immediate limit enforcement without high CPU load
-# Uses sleep 2 for 2-second intervals (safe frequency as per requirements: 1-5 seconds)
-cat > /etc/systemd/system/bw-limit-check.service <<-END
-[Unit]
-Description=Bandwidth Limit Monitoring and Blocking Service (2s interval)
-After=network.target xray.service
-
-[Service]
-Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/cek-bw-limit check >/dev/null 2>&1; sleep 2; done'
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-END
-
-# Create persistent usage storage directories
+# Create persistent storage directories
 mkdir -p /etc/xray
 mkdir -p /etc/myvpn/usage
 mkdir -p /etc/myvpn/blocked_users
-touch /etc/xray/bw-limit.conf 2>/dev/null
-touch /etc/xray/bw-usage.conf 2>/dev/null
-touch /etc/xray/bw-disabled.conf 2>/dev/null
-touch /etc/xray/bw-last-stats.conf 2>/dev/null
 touch /etc/myvpn/blocked.log 2>/dev/null
 touch /etc/myvpn/deleted.log 2>/dev/null
 
-# Create new JSON-based bandwidth tracking storage directory
+# Create new JSON-based storage directory
 chmod 755 /etc/myvpn/usage
 chmod 755 /etc/myvpn/blocked_users
 
-# Install bandwidth tracking library
-if [ -f "bw-tracking-lib.sh" ]; then
-    cp bw-tracking-lib.sh /usr/bin/bw-tracking-lib
-    chmod +x /usr/bin/bw-tracking-lib
-fi
 
-# Install real-time bandwidth monitor
-if [ -f "realtime-bandwidth.sh" ]; then
-    cp realtime-bandwidth.sh /usr/bin/realtime-bandwidth
-    chmod +x /usr/bin/realtime-bandwidth
-fi
 
-# Install real-time host capture monitor
-if [ -f "realtime-hosts.sh" ]; then
-    cp realtime-hosts.sh /usr/bin/realtime-hosts
-    chmod +x /usr/bin/realtime-hosts
-fi
-
-# Create systemd service for real-time host capture with safe 2-second intervals
-# Note: 2-second interval for real-time host monitoring with safe frequency (1-5 seconds)
-# This captures hosts from all incoming connections continuously
-# Uses sleep 2 for 2-second intervals - lightweight and stable
-cat > /etc/systemd/system/host-capture.service <<-END
+# Create systemd service for xray quota monitor (3x-ui style)
+cat > /etc/systemd/system/xray-quota-monitor.service <<-END
 [Unit]
-Description=Real-time Host Capture Service (2s interval)
-After=network.target xray.service nginx.service
+Description=Xray Traffic Monitor & Quota Enforcer (3x-ui style)
+Documentation=https://github.com/LamonLind/Blue
+After=network.target xray.service
+Wants=xray.service
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'while true; do /usr/bin/capture-host >/dev/null 2>&1; sleep 2; done'
+ExecStart=/bin/bash -c 'while true; do /usr/bin/xray-traffic-monitor; sleep 60; done'
 Restart=always
-RestartSec=3
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 END
 
 systemctl daemon-reload >/dev/null 2>&1
-systemctl enable bw-limit-check >/dev/null 2>&1
-systemctl start bw-limit-check >/dev/null 2>&1
+systemctl enable xray-quota-monitor >/dev/null 2>&1
+systemctl start xray-quota-monitor >/dev/null 2>&1
+
+# Create systemd service for VPN host capture (runs every 60s)
+cat > /etc/systemd/system/host-capture.service <<-END
+[Unit]
+Description=VPN Host Capture Service
+Documentation=https://github.com/LamonLind/Blue
+After=network.target xray.service nginx.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /usr/bin/capture-host >/dev/null 2>&1; sleep 60; done'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+END
+
+systemctl daemon-reload >/dev/null 2>&1
 systemctl enable host-capture >/dev/null 2>&1
 systemctl start host-capture >/dev/null 2>&1
 
@@ -448,21 +431,21 @@ echo ""
 echo ""
 echo "   >>> Service & Port"  | tee -a log-install.txt
 echo "   - OpenSSH                 : 22"  | tee -a log-install.txt
-echo "   - SSH Websocket           : 80" | tee -a log-install.txt
-echo "   - SSH SSL Websocket       : 443" | tee -a log-install.txt
+echo "   - SSH Websocket (Non-TLS) : 80, 8080, 8880, 2052, 2082, 2086, 2095" | tee -a log-install.txt
+echo "   - SSH Websocket (TLS)     : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
 echo "   - Stunnel5                : 447, 777" | tee -a log-install.txt
 echo "   - Dropbear                : 109, 143" | tee -a log-install.txt
 echo "   - Badvpn                  : 7100-7300" | tee -a log-install.txt
 echo "   - Nginx                   : 81" | tee -a log-install.txt
-echo "   - XRAY  Vmess TLS         : 443" | tee -a log-install.txt
-echo "   - XRAY  Vmess None TLS    : 80" | tee -a log-install.txt
-echo "   - XRAY  Vless TLS         : 443" | tee -a log-install.txt
-echo "   - XRAY  Vless None TLS    : 80" | tee -a log-install.txt
-echo "   - Trojan GRPC             : 443" | tee -a log-install.txt
-echo "   - Trojan WS               : 443" | tee -a log-install.txt
-echo "   - Trojan GO               : 443" | tee -a log-install.txt
+echo "   - XRAY  Vmess TLS         : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
+echo "   - XRAY  Vmess None TLS    : 80, 8080, 8880, 2052, 2082, 2086, 2095" | tee -a log-install.txt
+echo "   - XRAY  Vless TLS         : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
+echo "   - XRAY  Vless None TLS    : 80, 8080, 8880, 2052, 2082, 2086, 2095" | tee -a log-install.txt
+echo "   - Trojan GRPC             : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
+echo "   - Trojan WS               : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
+echo "   - Trojan GO               : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
 #echo "   - Trojan GFW              : 443" | tee -a log-install.txt
-echo "   - Sodosok WS/GRPC         : 443" | tee -a log-install.txt
+echo "   - Sodosok WS/GRPC         : 443, 2053, 2083, 2087, 2096, 8443" | tee -a log-install.txt
 echo ""  | tee -a log-install.txt
 echo "   >>> Server Information & Other Features"  | tee -a log-install.txt
 echo "   - Timezone                : Asia/Kuala_Lumpur (GMT +8)"  | tee -a log-install.txt

@@ -94,13 +94,19 @@ clear
 
 uuid=$(cat /proc/sys/kernel/random/uuid)
 read -p "Expired (days): " masaaktif
-read -p "Bandwidth Limit (MB, 0 for unlimited): " bw_limit
-bw_limit=${bw_limit:-0}
 exp=`date -d "$masaaktif days" +"%Y-%m-%d"`
-# Add bandwidth limit if specified
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-    /usr/bin/cek-bw-limit add "$user" "$bw_limit" "trojan" >/dev/null 2>&1
+
+# Bandwidth quota prompt (like 3x-ui)
+echo ""
+echo -e "${YELLOW}Bandwidth Quota Limit:${NC}"
+echo "Enter data quota limit (e.g., 10GB, 500MB, 1TB)"
+echo "Press Enter for unlimited"
+read -p "Quota: " quota_limit
+if [ -n "$quota_limit" ]; then
+    # Set quota using quota manager
+    /usr/bin/xray-quota-manager set "$user" "$quota_limit" 2>/dev/null
 fi
+
 sed -i '/#trojanws$/a\#tr '"$user $exp"'\
 },{"password": "'""$uuid""'","email": "'""$user""'"' /etc/xray/config.json
 sed -i '/#trojangrpc$/a\#trg '"$user $exp"'\
@@ -118,6 +124,11 @@ cat > /home/vps/public_html/trojan-$user.txt <<-END
 ====================================================================
 
 _______________________________________________________
+              Trojan Account Information
+_______________________________________________________
+Username/Email : $user
+Expired On : $exp
+_______________________________________________________
               Link Trojan Account
 _______________________________________________________
 Link WS : trojan://${uuid}@${domain}:${tr}?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#TROJAN_WS_${user}
@@ -126,8 +137,6 @@ Link GO : trojan-go://${uuid}@${domain}:${tr}?path=%2Ftrojan-ws&security=tls&hos
 _______________________________________________________
 Link GRPC : trojan://${uuid}@${domain}:${tr}?mode=gun&security=tls&type=grpc&serviceName=trojan-grpc&sni=${domain}#TROJAN_GRPC_${user}
 _______________________________________________________
-Expired On : $exp
-
 END
 trojanlink1="trojan://${uuid}@${domain}:${tr}?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#TROJAN_WS_${user}"
 trojanlink2="trojan-go://${uuid}@${domain}:${tr}?path=%2Ftrojan-ws&security=tls&host=${domain}&type=ws&sni=${domain}#TROJANGO_${user}"
@@ -137,6 +146,7 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "\E[0;41;36m           TROJAN ACCOUNT          \E[0m" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Remarks : ${user}" | tee -a /etc/log-create-user.log
+echo -e "Email/Username : ${user}" | tee -a /etc/log-create-user.log
 echo -e "Host/IP : ${domain}" | tee -a /etc/log-create-user.log
 echo -e "port : ${tr}" | tee -a /etc/log-create-user.log
 echo -e "Key : ${uuid}" | tee -a /etc/log-create-user.log
@@ -153,12 +163,6 @@ echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━�
 echo -e "Link Trojan Config : http://${domain}:81/trojan-$user.txt" | tee -a /etc/log-create-user.log
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo -e "Expired On : $exp" | tee -a /etc/log-create-user.log
-echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
-if [ "$bw_limit" -gt 0 ] 2>/dev/null; then
-echo -e "Bandwidth Limit : ${bw_limit} MB" | tee -a /etc/log-create-user.log
-else
-echo -e "Bandwidth Limit : Unlimited" | tee -a /etc/log-create-user.log
-fi
 echo -e "\033[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m" | tee -a /etc/log-create-user.log
 echo "" | tee -a /etc/log-create-user.log
 read -n 1 -s -r -p "Press any key to back on menu"

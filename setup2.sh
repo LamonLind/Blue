@@ -187,7 +187,6 @@ wget -q -O /usr/bin/clearlog "https://raw.githubusercontent.com/LamonLind/Blue/m
 wget -q -O /usr/bin/running "https://raw.githubusercontent.com/LamonLind/Blue/main/running.sh"
 wget -q -O /usr/bin/cek-trafik "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-trafik.sh"
 wget -q -O /usr/bin/cek-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/speedtes_cli.py"
-wget -q -O /usr/bin/cek-bandwidth "https://raw.githubusercontent.com/LamonLind/Blue/main/cek-bandwidth.sh"
 wget -q -O /usr/bin/cek-ram "https://raw.githubusercontent.com/LamonLind/Blue/main/ram.sh"
 wget -q -O /usr/bin/limit-speed "https://raw.githubusercontent.com/LamonLind/Blue/main/limit-speed.sh"
 wget -q -O /usr/bin/menu-vless "https://raw.githubusercontent.com/LamonLind/Blue/main/menu-vless.sh"
@@ -225,7 +224,6 @@ chmod +x /usr/bin/clearlog
 chmod +x /usr/bin/running
 chmod +x /usr/bin/cek-trafik
 chmod +x /usr/bin/cek-speed
-chmod +x /usr/bin/cek-bandwidth
 chmod +x /usr/bin/cek-ram
 chmod +x /usr/bin/limit-speed
 chmod +x /usr/bin/menu-vless

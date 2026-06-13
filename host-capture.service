@@ -1,0 +1,13 @@
+[Unit]
+Description=VPN Host Capture Service
+Documentation=https://github.com/LamonLind/Blue
+After=network.target xray.service nginx.service
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'while true; do /usr/bin/capture-host >/dev/null 2>&1; sleep 60; done'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

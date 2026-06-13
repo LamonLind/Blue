@@ -54,6 +54,68 @@ export Auther=".geovpn"
 
 # // Exporting Script Version
 export VERSION="1.1"
+
+# // Distribution & service manager detection
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+fi
+DISTRO_ID="${ID:-unknown}"
+DISTRO_ID="${DISTRO_ID,,}"
+IS_ALPINE=0
+if [ "$DISTRO_ID" = "alpine" ]; then
+  IS_ALPINE=1
+fi
+
+HAS_SYSTEMCTL=0
+if command -v systemctl >/dev/null 2>&1; then
+  HAS_SYSTEMCTL=1
+fi
+
+pkg_remove() {
+  if [ "$IS_ALPINE" -eq 1 ]; then
+    apk del "$@" >/dev/null 2>&1 || true
+  else
+    apt-get remove --purge -y "$@" >/dev/null 2>&1 || true
+  fi
+}
+
+pkg_update() {
+  if [ "$IS_ALPINE" -eq 1 ]; then
+    apk update >/dev/null 2>&1 || true
+  else
+    apt update -y >/dev/null 2>&1 || true
+  fi
+}
+
+pkg_install() {
+  if [ "$IS_ALPINE" -eq 1 ]; then
+    apk add --no-cache "$@" >/dev/null 2>&1 || true
+  else
+    apt-get --reinstall --fix-missing install -y "$@" >/dev/null 2>&1 || true
+  fi
+}
+
+pkg_upgrade() {
+  if [ "$IS_ALPINE" -eq 1 ]; then
+    apk upgrade --no-cache >/dev/null 2>&1 || true
+  else
+    apt update -y >/dev/null 2>&1 || true
+    apt upgrade -y >/dev/null 2>&1 || true
+    apt dist-upgrade -y >/dev/null 2>&1 || true
+  fi
+}
+
+restart_cron_service() {
+  if [ "$HAS_SYSTEMCTL" -eq 1 ]; then
+    systemctl restart cron >/dev/null 2>&1 || systemctl restart crond >/dev/null 2>&1 || true
+    systemctl reload cron >/dev/null 2>&1 || systemctl reload crond >/dev/null 2>&1 || true
+  elif command -v rc-service >/dev/null 2>&1; then
+    rc-service crond restart >/dev/null 2>&1 || rc-service cron restart >/dev/null 2>&1 || true
+  else
+    service cron restart >/dev/null 2>&1 || service crond restart >/dev/null 2>&1 || true
+    service cron reload >/dev/null 2>&1 || service crond reload >/dev/null 2>&1 || true
+  fi
+}
  
 # // Exporint IP AddressInformation
 export IP=$( curl -s https://ipinfo.io/ip/ )
@@ -90,29 +152,30 @@ echo -e "${GREEN}Starting Installation............${NC}"
 # // Go To Root Directory
 cd /root/
 # // Remove
-apt-get remove --purge nginx* -y
-apt-get remove --purge nginx-common* -y
-apt-get remove --purge nginx-full* -y
-apt-get remove --purge dropbear* -y
-apt-get remove --purge stunnel4* -y
-apt-get remove --purge apache2* -y
-apt-get remove --purge ufw* -y
-apt-get remove --purge firewalld* -y
-apt-get remove --purge exim4* -y
-apt autoremove -y
+if [ "$IS_ALPINE" -eq 1 ]; then
+  pkg_remove nginx dropbear stunnel apache2 ufw firewalld exim4
+else
+  pkg_remove nginx nginx-common nginx-full dropbear stunnel4 apache2 ufw firewalld exim4
+  apt autoremove -y >/dev/null 2>&1 || true
+fi
 
 # // Update
-apt update -y
+pkg_update
 
 # // Install Requirement Tools
-apt-get --reinstall --fix-missing install -y sudo dpkg psmisc socat jq ruby wondershaper python2 tmux nmap bzip2 gzip coreutils wget screen rsyslog iftop htop net-tools zip unzip wget vim net-tools curl nano sed screen gnupg gnupg1 bc apt-transport-https build-essential gcc g++ automake make autoconf perl m4 dos2unix dropbear libreadline-dev zlib1g-dev libssl-dev dirmngr libxml-parser-perl neofetch git lsof iptables iptables-persistent
-apt-get --reinstall --fix-missing install -y libreadline-dev zlib1g-dev libssl-dev python2 screen curl jq bzip2 gzip coreutils rsyslog iftop htop zip unzip net-tools sed gnupg gnupg1 bc sudo apt-transport-https build-essential dirmngr libxml-parser-perl neofetch screenfetch git lsof openssl easy-rsa fail2ban tmux vnstat dropbear libsqlite3-dev socat cron bash-completion ntpdate xz-utils sudo apt-transport-https gnupg2 gnupg1 dnsutils lsb-release chrony
-gem install lolcat
+if [ "$IS_ALPINE" -eq 1 ]; then
+  pkg_install bash sudo psmisc socat jq ruby tmux nmap bzip2 gzip coreutils wget screen rsyslog iftop htop net-tools zip unzip vim curl nano sed gnupg bc build-base automake autoconf perl m4 dos2unix dropbear git lsof iptables openssl easy-rsa fail2ban sqlite-dev dcron bash-completion chrony xz bind-tools ca-certificates iproute2 python3
+else
+  pkg_install sudo dpkg psmisc socat jq ruby wondershaper python2 tmux nmap bzip2 gzip coreutils wget screen rsyslog iftop htop net-tools zip unzip vim curl nano sed gnupg gnupg1 bc apt-transport-https build-essential gcc g++ automake make autoconf perl m4 dos2unix dropbear libreadline-dev zlib1g-dev libssl-dev dirmngr libxml-parser-perl neofetch git lsof iptables iptables-persistent screenfetch openssl easy-rsa fail2ban vnstat libsqlite3-dev cron bash-completion ntpdate xz-utils gnupg2 dnsutils lsb-release chrony
+fi
+
+if command -v gem >/dev/null 2>&1; then
+  gem install lolcat >/dev/null 2>&1 || true
+fi
 
 # // Update & Upgrade
-apt update -y
-apt upgrade -y
-apt dist-upgrade -y
+pkg_update
+pkg_upgrade
 
 # // Clear
 clear
@@ -264,10 +327,14 @@ chmod +x /usr/bin/xray-traffic-monitor
 
 
 # > install gotop
+if command -v dpkg >/dev/null 2>&1; then
     gotop_latest="$(curl -s https://api.github.com/repos/LamonLind/gotop/releases | grep tag_name | sed -E 's/.*"v(.*)".*/\1/' | head -n 1)"
     gotop_link="https://github.com/LamonLind/gotop/releases/download/gotopV4/gotop_v4.2.0_linux_amd64.deb"
     curl -sL "$gotop_link" -o /tmp/gotop.deb
     dpkg -i /tmp/gotop.deb >/dev/null 2>&1
+else
+    echo -e "${YELLOW}[INFO] Skipping gotop .deb install on non-dpkg systems${NC}"
+fi
 
 
 # > Setup Crontab
@@ -319,6 +386,7 @@ chmod 755 /etc/myvpn/blocked_users
 
 
 
+if [ "$HAS_SYSTEMCTL" -eq 1 ]; then
 # Create systemd service for xray quota monitor (3x-ui style)
 cat > /etc/systemd/system/xray-quota-monitor.service <<-END
 [Unit]
@@ -363,13 +431,17 @@ END
 systemctl daemon-reload >/dev/null 2>&1
 systemctl enable host-capture >/dev/null 2>&1
 systemctl start host-capture >/dev/null 2>&1
+else
+  (crontab -l 2>/dev/null | grep -v "/usr/bin/xray-traffic-monitor" | grep -v "/usr/bin/capture-host"; \
+   echo "*/1 * * * * /usr/bin/xray-traffic-monitor >/dev/null 2>&1"; \
+   echo "*/1 * * * * /usr/bin/capture-host >/dev/null 2>&1") | crontab - 2>/dev/null
+fi
 
 cat > /home/re_otm <<-END
 7
 END
 
-service cron restart >/dev/null 2>&1
-service cron reload >/dev/null 2>&1
+restart_cron_service
 
 clear
 cat> /root/.profile << END
